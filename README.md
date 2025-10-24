@@ -1,6 +1,6 @@
 # Imagine AI Storybook
 
-This project is a personal project I created for my daughter to help her daily 10 min read goal for school. I wanted to allow her to use her imagination and create stories that she would love to read.
+This project is a personal project I created for my daughter to help her complete her daily 10 min reading goal for school. I wanted to allow her to use her imagination and create stories that she would love to read. I also wanted to enable her to see herself in every story she reads showing the possibilities are endless.
 
 ## Core Features
 
