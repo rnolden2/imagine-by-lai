@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "5173:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./imagine.db:/app/imagine.db
+      - ./imagine.db-shm:/app/imagine.db-shm
+      - ./imagine.db-wal:/app/imagine.db-wal
+    restart: unless-stopped
