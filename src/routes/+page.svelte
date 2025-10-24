@@ -53,6 +53,9 @@
 				};
 			}}
 		>
+			{#if selectedUserId !== null}
+				<input type="hidden" name="userId" value={selectedUserId} />
+			{/if}
 			<div>
 				<label for="prompt" class="block text-sm font-medium text-gray-700"
 					>What should the story be about?</label

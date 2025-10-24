@@ -29,3 +29,6 @@ static/robots.txt
 
 # VS Code
 .vscode/
+
+# Documentation
+docs/

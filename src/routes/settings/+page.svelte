@@ -1,7 +1,13 @@
 <script lang="ts">
-	import type { PageData } from './$types';
+	import type { PageData, ActionData } from './$types';
+	import { enhance } from '$app/forms';
 
 	export let data: PageData;
+	export let form: ActionData;
+
+	let selectedStoryId: string = '';
+	let selectedImageUrl: string = '';
+	let showImagePreview = false;
 </script>
 
 <h1 class="text-3xl font-bold text-gray-900 mb-6">Admin Settings</h1>
@@ -126,5 +132,152 @@
 				</div>
 			{/each}
 		</div>
+	</div>
+
+	<!-- Image Assignment -->
+	<div class="bg-white p-6 rounded-lg shadow col-span-1 md:col-span-2">
+		<h2 class="text-xl font-semibold mb-4">Assign Images to Stories</h2>
+		<p class="text-sm text-gray-600 mb-4">
+			Sometimes images are generated but not automatically assigned to stories. Use this tool to
+			manually assign orphaned images.
+		</p>
+
+		{#if form?.success && form?.message}
+			<div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
+				{form.message}
+				{#if form?.storyId}
+					<a href="/story/{form.storyId}" class="underline ml-2">View Story</a>
+				{/if}
+			</div>
+		{/if}
+
+		{#if form?.message && !form?.success}
+			<div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+				{form.message}
+			</div>
+		{/if}
+
+		<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+			<!-- Stories Without Images -->
+			<div>
+				<h3 class="font-semibold mb-3">Stories Without Images ({data.storiesWithoutImages.length})</h3>
+				<div class="space-y-2 max-h-96 overflow-y-auto border rounded p-2">
+					{#each data.storiesWithoutImages as story}
+						<button
+							type="button"
+							on:click={() => {
+								selectedStoryId = story.id.toString();
+							}}
+							class="w-full text-left p-3 rounded transition-colors {selectedStoryId ===
+							story.id.toString()
+								? 'bg-blue-100 border-2 border-blue-500'
+								: 'bg-gray-50 hover:bg-gray-100'}"
+						>
+							<p class="font-medium text-sm">Story #{story.id}</p>
+							<p class="text-xs text-gray-600 truncate">"{story.prompt}"</p>
+							<p class="text-xs text-gray-500">
+								{new Date(story.created_at).toLocaleDateString()}
+							</p>
+						</button>
+					{:else}
+						<p class="text-gray-500 text-sm p-4">All stories have images!</p>
+					{/each}
+				</div>
+			</div>
+
+			<!-- Available Images -->
+			<div>
+				<h3 class="font-semibold mb-3">Available Images ({data.availableImages.length})</h3>
+				<div class="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto border rounded p-2">
+					{#each data.availableImages as image}
+						<button
+							type="button"
+							on:click={() => {
+								selectedImageUrl = image.url;
+								showImagePreview = true;
+							}}
+							class="relative group cursor-pointer rounded overflow-hidden {selectedImageUrl ===
+							image.url
+								? 'ring-4 ring-blue-500'
+								: 'hover:ring-2 hover:ring-gray-300'}"
+						>
+							<img
+								src={image.url}
+								alt={image.name}
+								class="w-full h-32 object-cover"
+								loading="lazy"
+							/>
+							<div
+								class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+							>
+								<p class="truncate">{image.name}</p>
+								<p>{new Date(image.timeCreated).toLocaleDateString()}</p>
+							</div>
+						</button>
+					{:else}
+						<p class="text-gray-500 text-sm p-4 col-span-2">No images found in storage.</p>
+					{/each}
+				</div>
+			</div>
+		</div>
+
+		<!-- Assignment Form -->
+		<form
+			method="POST"
+			action="?/assignImageToStory"
+			class="mt-6 flex gap-4 items-center"
+			use:enhance
+		>
+			<input type="hidden" name="storyId" value={selectedStoryId} />
+			<input type="hidden" name="imageUrl" value={selectedImageUrl} />
+
+			<div class="flex-1">
+				{#if selectedStoryId && selectedImageUrl}
+					<p class="text-sm text-gray-700">
+						Ready to assign image to <span class="font-semibold">Story #{selectedStoryId}</span>
+					</p>
+				{:else}
+					<p class="text-sm text-gray-500">
+						Select a story and an image to assign them together
+					</p>
+				{/if}
+			</div>
+
+			<button
+				type="submit"
+				disabled={!selectedStoryId || !selectedImageUrl}
+				class="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+			>
+				Assign Image
+			</button>
+		</form>
+
+		<!-- Image Preview Modal -->
+		{#if showImagePreview && selectedImageUrl}
+			<div
+				class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+				on:click={() => (showImagePreview = false)}
+				on:keydown={(e) => e.key === 'Escape' && (showImagePreview = false)}
+				role="button"
+				tabindex="0"
+			>
+				<div
+					class="bg-white p-4 rounded-lg max-w-2xl max-h-[90vh] overflow-auto"
+					on:click|stopPropagation
+					role="dialog"
+					aria-modal="true"
+				>
+					<div class="flex justify-between items-center mb-4">
+						<h3 class="font-semibold">Image Preview</h3>
+						<button
+							type="button"
+							on:click={() => (showImagePreview = false)}
+							class="text-gray-500 hover:text-gray-700 text-2xl">&times;</button
+						>
+					</div>
+					<img src={selectedImageUrl} alt="Preview" class="w-full h-auto" />
+				</div>
+			</div>
+		{/if}
 	</div>
 </div>
