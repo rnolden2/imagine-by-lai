@@ -16,47 +16,66 @@ export const load: PageServerLoad = async () => {
 
 	let backups: { name: string; timeCreated: string }[] = [];
 	let availableImages: { url: string; name: string; timeCreated: string }[] = [];
+	let gcsError: string | null = null;
 
 	try {
-		if (GCS_BUCKET_NAME) {
+		if (!GCS_BUCKET_NAME) {
+			gcsError = 'GCS_BUCKET_NAME environment variable is not configured';
+			console.warn('GCS_BUCKET_NAME not set - image assignment features will be limited');
+		} else {
 			const storage = new Storage();
 			const bucket = storage.bucket(GCS_BUCKET_NAME);
 
 			// Fetch backups
-			const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
-			backups = backupFiles
-				.filter((file) => file.name.endsWith('.db'))
-				.map((file) => ({
-					name: file.name,
-					timeCreated: file.metadata.timeCreated as string
-				}))
-				.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
+			try {
+				const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
+				backups = backupFiles
+					.filter((file) => file.name.endsWith('.db'))
+					.map((file) => ({
+						name: file.name,
+						timeCreated: file.metadata.timeCreated as string
+					}))
+					.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
+			} catch (backupError) {
+				console.error('Failed to fetch backups:', backupError);
+				if (!gcsError) {
+					gcsError = 'Failed to fetch backups from Google Cloud Storage';
+				}
+			}
 
 			// Fetch available images
-			const [imageFiles] = await bucket.getFiles({ prefix: 'imagine-by-lai/story-' });
-			availableImages = await Promise.all(
-				imageFiles
-					.filter((file) => file.name.endsWith('.png'))
-					.sort((a, b) => {
-						const timeA = new Date(a.metadata.timeCreated as string).getTime();
-						const timeB = new Date(b.metadata.timeCreated as string).getTime();
-						return timeB - timeA; // Most recent first
-					})
-					.map(async (file) => {
-						const [url] = await file.getSignedUrl({
-							action: 'read',
-							expires: '03-09-2491'
-						});
-						return {
-							url,
-							name: file.name.replace('imagine-by-lai/', ''),
-							timeCreated: file.metadata.timeCreated as string
-						};
-					})
-			);
+			try {
+				const [imageFiles] = await bucket.getFiles({ prefix: 'imagine-by-lai/story-' });
+				availableImages = await Promise.all(
+					imageFiles
+						.filter((file) => file.name.endsWith('.png'))
+						.sort((a, b) => {
+							const timeA = new Date(a.metadata.timeCreated as string).getTime();
+							const timeB = new Date(b.metadata.timeCreated as string).getTime();
+							return timeB - timeA; // Most recent first
+						})
+						.map(async (file) => {
+							const [url] = await file.getSignedUrl({
+								action: 'read',
+								expires: '03-09-2491'
+							});
+							return {
+								url,
+								name: file.name.replace('imagine-by-lai/', ''),
+								timeCreated: file.metadata.timeCreated as string
+							};
+						})
+				);
+			} catch (imageError) {
+				console.error('Failed to fetch images:', imageError);
+				if (!gcsError) {
+					gcsError = 'Failed to fetch images from Google Cloud Storage';
+				}
+			}
 		}
 	} catch (error) {
-		console.error('Failed to fetch GCS data:', error);
+		console.error('Failed to initialize GCS:', error);
+		gcsError = `Google Cloud Storage error: ${error instanceof Error ? error.message : 'Unknown error'}`;
 	}
 
 	return {
@@ -65,7 +84,8 @@ export const load: PageServerLoad = async () => {
 		stories,
 		storiesWithoutImages,
 		availableImages,
-		backups
+		backups,
+		gcsError
 	};
 };
 

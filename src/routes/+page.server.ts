@@ -7,11 +7,34 @@ import { getDb } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
 import type { User, Story } from '$lib/types';
 
-export const load: PageServerLoad = () => {
+export const load: PageServerLoad = async () => {
 	const db = getDb();
 	const users = db.prepare('SELECT * FROM users').all() as User[];
 	const stories = db.prepare('SELECT * FROM stories ORDER BY created_at DESC').all() as Story[];
-	return { users, stories };
+	
+	let latestBackup: { name: string; timeCreated: string } | null = null;
+	
+	// Fetch latest backup if no stories exist
+	if (stories.length === 0 && GCS_BUCKET_NAME) {
+		try {
+			const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
+			const backups = backupFiles
+				.filter((file) => file.name.endsWith('.db'))
+				.map((file) => ({
+					name: file.name,
+					timeCreated: file.metadata.timeCreated as string
+				}))
+				.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
+			
+			if (backups.length > 0) {
+				latestBackup = backups[0];
+			}
+		} catch (error) {
+			console.error('Failed to fetch latest backup:', error);
+		}
+	}
+	
+	return { users, stories, latestBackup };
 };
 
 // Asynchronously initialize the Gemini models
@@ -189,6 +212,48 @@ async function withTimeout<T>(
 }
 
 export const actions: Actions = {
+	loadStoriesFromBackup: async () => {
+		try {
+			if (!GCS_BUCKET_NAME) {
+				return fail(500, { error: 'GCS_BUCKET_NAME is not configured.' });
+			}
+
+			// Get latest backup
+			const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
+			const backups = backupFiles
+				.filter((file) => file.name.endsWith('.db'))
+				.map((file) => ({
+					name: file.name,
+					timeCreated: file.metadata.timeCreated as string
+				}))
+				.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
+
+			if (backups.length === 0) {
+				return fail(404, { error: 'No backups found in storage.' });
+			}
+
+			const latestBackup = backups[0];
+			const fs = await import('fs/promises');
+			const file = bucket.file(latestBackup.name);
+
+			const tempPath = 'imagine.db.tmp';
+			await file.download({ destination: tempPath });
+
+			const db = getDb();
+			db.close();
+
+			await fs.rename(tempPath, 'imagine.db');
+
+			return {
+				success: true,
+				message: 'Stories loaded successfully from backup! The page will refresh.'
+			};
+		} catch (error) {
+			console.error('Failed to load stories from backup:', error);
+			return fail(500, { error: 'Failed to load stories from backup. Please try again.' });
+		}
+	},
+
 	generateStory: async ({ request }) => {
 		const data = await request.formData();
 		const prompt = data.get('prompt');

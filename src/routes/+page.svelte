@@ -86,6 +86,28 @@
 		{/if}
 	</div>
 
+	<!-- Load Stories Button (when no stories exist) -->
+	{#if data.stories && data.stories.length === 0 && data.latestBackup}
+		<div class="w-full max-w-md mx-auto mt-8">
+			<div class="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+				<p class="text-gray-700 mb-4">
+					No stories found. Would you like to load stories from the latest backup?
+				</p>
+				<p class="text-sm text-gray-600 mb-4">
+					Backup from: {new Date(data.latestBackup.timeCreated).toLocaleString()}
+				</p>
+				<form method="POST" action="?/loadStoriesFromBackup">
+					<button
+						type="submit"
+						class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md transition-colors"
+					>
+						Load Stories
+					</button>
+				</form>
+			</div>
+		</div>
+	{/if}
+
 	<!-- Recent Stories -->
 	{#if data.stories && data.stories.length > 0}
 		<div class="w-full max-w-5xl mx-auto mt-12 px-4 pb-12">

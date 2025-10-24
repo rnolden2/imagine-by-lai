@@ -142,6 +142,17 @@
 			manually assign orphaned images.
 		</p>
 
+		{#if data.gcsError}
+			<div class="bg-yellow-100 border border-yellow-400 text-yellow-800 px-4 py-3 rounded mb-4">
+				<p class="font-semibold">⚠️ Google Cloud Storage Error</p>
+				<p class="text-sm mt-1">{data.gcsError}</p>
+				<p class="text-sm mt-2">
+					Please check your Google Cloud Storage configuration and ensure the service account has
+					proper permissions.
+				</p>
+			</div>
+		{/if}
+
 		{#if form?.success && form?.message}
 			<div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
 				{form.message}
