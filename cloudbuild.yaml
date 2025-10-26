@@ -1,7 +1,7 @@
 steps:
   # Build the container image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', 'no-cache', '-t', 'gcr.io/$PROJECT_ID/imagine-by-lai:latest', '.']
+    args: ['build', '--no-cache', '-t', 'gcr.io/$PROJECT_ID/imagine-by-lai:latest', '.']
   # Push the container image to Container Registry
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/$PROJECT_ID/imagine-by-lai:latest']
