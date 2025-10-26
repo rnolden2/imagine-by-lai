@@ -7,6 +7,13 @@ import { getDb } from '$lib/server/db';
 import type { PageServerLoad } from './$types';
 import type { User, Story } from '$lib/types';
 
+if (!GCS_BUCKET_NAME) {
+	throw new Error('Missing GCS_BUCKET_NAME environment variable.');
+}
+
+const storage = new Storage();
+const bucket = storage.bucket(GCS_BUCKET_NAME);
+
 export const load: PageServerLoad = async () => {
 	const db = getDb();
 	const users = db.prepare('SELECT * FROM users').all() as User[];
@@ -56,13 +63,6 @@ async function getImageModel(): Promise<GenerativeModel> {
 	imageModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
 	return imageModel;
 }
-
-if (!GCS_BUCKET_NAME) {
-	throw new Error('Missing GCS_BUCKET_NAME environment variable.');
-}
-
-const storage = new Storage();
-const bucket = storage.bucket(GCS_BUCKET_NAME);
 
 // Error types for better error handling
 class StoryGenerationError extends Error {
