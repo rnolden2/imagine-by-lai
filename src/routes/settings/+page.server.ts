@@ -46,7 +46,7 @@ export const load: PageServerLoad = async () => {
 			// Fetch available images
 			try {
 				const [imageFiles] = await bucket.getFiles({ prefix: 'imagine-by-lai/story-' });
-				availableImages = await Promise.all(
+				const allImages = await Promise.all(
 					imageFiles
 						.filter((file) => file.name.endsWith('.png'))
 						.sort((a, b) => {
@@ -66,6 +66,9 @@ export const load: PageServerLoad = async () => {
 							};
 						})
 				);
+
+				const storyImageUrls = new Set(stories.map((s) => s.image_url).filter(Boolean));
+				availableImages = allImages.filter((img) => !storyImageUrls.has(img.url));
 			} catch (imageError) {
 				console.error('Failed to fetch images:', imageError);
 				if (!gcsError) {

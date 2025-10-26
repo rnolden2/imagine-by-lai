@@ -10,7 +10,7 @@
 	let showImagePreview = false;
 </script>
 
-<h1 class="text-3xl font-bold text-gray-900 mb-6">Admin Settings</h1>
+<h1 class="text-3xl font-bold text-gray-900 px-4 py-3">Admin Settings</h1>
 
 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
 	<!-- User Management -->
@@ -198,7 +198,7 @@
 
 			<!-- Available Images -->
 			<div>
-				<h3 class="font-semibold mb-3">Available Images ({data.availableImages.length})</h3>
+				<h3 class="font-semibold mb-3">Unassigned Images ({data.availableImages.length})</h3>
 				<div class="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto border rounded p-2">
 					{#each data.availableImages as image}
 						<button
