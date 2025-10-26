@@ -7,3 +7,4 @@ steps:
     args: ['push', 'gcr.io/$PROJECT_ID/imagine-by-lai:latest']
 images:
   - 'gcr.io/$PROJECT_ID/imagine-by-lai:latest'
+# Optionally, you can add substitutions, timeout, and other configurations here
