@@ -161,6 +161,7 @@
 			<div class="p-8 md:p-12">
 				<h1 class="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Your New Story</h1>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed relative"
 					on:click|capture={handleContentClick}

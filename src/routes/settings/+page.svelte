@@ -229,16 +229,15 @@
 									<p>{new Date(image.timeCreated).toLocaleDateString()}</p>
 								</div>
 							</button>
-							<div class="p-2 bg-gray-50">
-								<button
-									type="button"
-									on:click={() => {
-										createStoryImageUrl = image.url;
-										showCreateStoryModal = true;
-									}}
-									class="btn btn-sm btn-secondary w-full">Create Story</button
-								>
-							</div>
+							<button
+								type="button"
+								on:click={() => {
+									createStoryImageUrl = image.url;
+									showCreateStoryModal = true;
+								}}
+								class="absolute top-2 right-2 btn btn-xs btn-secondary shadow-lg z-10"
+								>Create Story</button
+							>
 						</div>
 					{:else}
 						<p class="text-gray-500 text-sm p-4 col-span-2">No images found in storage.</p>
