@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import { onMount } from 'svelte';
 	import { marked } from 'marked';
+	import ReadingGuideLine from '$lib/components/ReadingGuideLine.svelte';
 
 	export let data: PageData;
 
@@ -14,9 +15,31 @@
 	let synth: SpeechSynthesis;
 	const definitionCache = new Map<string, { phonetic: string; definition: string }>();
 
+	let storyContentElement: HTMLElement;
+	let lineHeight = 0;
+	let guidePosition = { top: 0, visible: false };
+
 	onMount(() => {
 		synth = window.speechSynthesis;
+		if (storyContentElement) {
+			const style = window.getComputedStyle(storyContentElement);
+			lineHeight = parseFloat(style.lineHeight);
+		}
 	});
+
+	function handleReadingGuideClick(event: MouseEvent) {
+		if (!lineHeight || !storyContentElement) return;
+
+		const rect = storyContentElement.getBoundingClientRect();
+		const relativeY = event.clientY - rect.top;
+		const lineIndex = Math.floor(relativeY / lineHeight);
+		const newTop = lineIndex * lineHeight;
+
+		guidePosition = {
+			top: newTop,
+			visible: true
+		};
+	}
 
 	// This function is no longer needed as we are not iterating over words
 	// async function handleWordClick(event: MouseEvent | KeyboardEvent, word: string) { ... }
@@ -25,38 +48,58 @@
 		// Ensure we're not clicking something inside the popup
 		if (target.closest('.fixed')) return;
 
+		// Check if shift key is held - if so, always show reading guide
+		if (event.shiftKey) {
+			handleReadingGuideClick(event);
+			return;
+		}
+
 		// Logic to get the specific word clicked
 		const selection = window.getSelection();
-		if (!selection || selection.rangeCount === 0) return;
+		if (!selection || selection.rangeCount === 0) {
+			handleReadingGuideClick(event);
+			return;
+		}
 
 		const range = selection.getRangeAt(0);
 		const node = selection.anchorNode;
 
 		// If the user clicked, not selected a range
 		if (node && node.nodeType === Node.TEXT_NODE && range.startOffset === range.endOffset) {
-			// Expand the range to the word boundaries
-			const wordRange = document.createRange();
+			// Get the character at the click position
 			const text = node.textContent || '';
+			const clickedChar = text[range.startOffset] || text[range.startOffset - 1];
+			
+			// Only trigger word lookup if clicking on an actual word character
+			// If clicking on whitespace or punctuation, show reading guide instead
+			if (clickedChar && clickedChar.match(/\w/)) {
+				// Expand the range to the word boundaries
+				const wordRange = document.createRange();
 
-			let start = range.startOffset;
-			while (start > 0 && text[start - 1].match(/\w/)) {
-				start--;
-			}
+				let start = range.startOffset;
+				while (start > 0 && text[start - 1].match(/\w/)) {
+					start--;
+				}
 
-			let end = range.startOffset;
-			while (end < text.length && text[end].match(/\w/)) {
-				end++;
-			}
+				let end = range.startOffset;
+				while (end < text.length && text[end].match(/\w/)) {
+					end++;
+				}
 
-			wordRange.setStart(node, start);
-			wordRange.setEnd(node, end);
+				wordRange.setStart(node, start);
+				wordRange.setEnd(node, end);
 
-			const word = wordRange.toString().trim();
-			if (word) {
-				const rect = wordRange.getBoundingClientRect();
-				handleWordSelection(word, rect);
+				const word = wordRange.toString().trim();
+				if (word) {
+					const rect = wordRange.getBoundingClientRect();
+					handleWordSelection(word, rect);
+					return;
+				}
 			}
 		}
+		
+		// Default to showing reading guide for all other cases
+		handleReadingGuideClick(event);
 	}
 
 	async function handleWordSelection(word: string, rect: DOMRect) {
@@ -119,9 +162,15 @@
 				<h1 class="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Your New Story</h1>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				<div
-					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed"
+					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed relative"
 					on:click|capture={handleContentClick}
+					bind:this={storyContentElement}
 				>
+					<ReadingGuideLine
+						top={guidePosition.top}
+						height={lineHeight}
+						visible={guidePosition.visible}
+					/>
 					{@html storyHtml}
 				</div>
 				<div class="mt-8 pt-6 border-t">

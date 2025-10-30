@@ -12,8 +12,15 @@
 	let score = 0;
 	let gameInterval: NodeJS.Timeout;
 	let spawnRate = 1000; // Start by spawning one per second
+	let audio: HTMLAudioElement;
 
 	onMount(() => {
+		if (audio) {
+			audio.play().catch((error) => {
+				// Autoplay was prevented.
+				console.error('Audio autoplay failed:', error);
+			});
+		}
 		// Function to add a new puppy
 		const addPuppy = () => {
 			const newPuppy: Puppy = {
@@ -44,6 +51,9 @@
 		return () => {
 			clearInterval(gameInterval);
 			clearInterval(speedUpInterval);
+			if (audio) {
+				audio.pause();
+			}
 		};
 	});
 
@@ -71,4 +81,9 @@
 	<div class="absolute top-5 left-1/2 -translate-x-1/2 text-2xl font-bold text-white">
 		Generating your story...
 	</div>
+	<audio
+		bind:this={audio}
+		src="https://storage.googleapis.com/api-project-371618.appspot.com/imagine-by-lai/audio/kids-happy-music.mp3"
+		loop
+	></audio>
 </div>

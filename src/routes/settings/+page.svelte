@@ -8,6 +8,8 @@
 	let selectedStoryId: string = '';
 	let selectedImageUrl: string = '';
 	let showImagePreview = false;
+	let showCreateStoryModal = false;
+	let createStoryImageUrl: string | null = null;
 </script>
 
 <h1 class="text-3xl font-bold text-gray-900 px-4 py-3">Admin Settings</h1>
@@ -201,30 +203,43 @@
 				<h3 class="font-semibold mb-3">Unassigned Images ({data.availableImages.length})</h3>
 				<div class="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto border rounded p-2">
 					{#each data.availableImages as image}
-						<button
-							type="button"
-							on:click={() => {
-								selectedImageUrl = image.url;
-								showImagePreview = true;
-							}}
-							class="relative group cursor-pointer rounded overflow-hidden {selectedImageUrl ===
-							image.url
+						<div
+							class="relative group rounded overflow-hidden border {selectedImageUrl === image.url
 								? 'ring-4 ring-blue-500'
-								: 'hover:ring-2 hover:ring-gray-300'}"
+								: ''}"
 						>
-							<img
-								src={image.url}
-								alt={image.name}
-								class="w-full h-32 object-cover"
-								loading="lazy"
-							/>
-							<div
-								class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+							<button
+								type="button"
+								on:click={() => {
+									selectedImageUrl = image.url;
+									showImagePreview = true;
+								}}
+								class="w-full"
 							>
-								<p class="truncate">{image.name}</p>
-								<p>{new Date(image.timeCreated).toLocaleDateString()}</p>
+								<img
+									src={image.url}
+									alt={image.name}
+									class="w-full h-32 object-cover"
+									loading="lazy"
+								/>
+								<div
+									class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+								>
+									<p class="truncate">{image.name}</p>
+									<p>{new Date(image.timeCreated).toLocaleDateString()}</p>
+								</div>
+							</button>
+							<div class="p-2 bg-gray-50">
+								<button
+									type="button"
+									on:click={() => {
+										createStoryImageUrl = image.url;
+										showCreateStoryModal = true;
+									}}
+									class="btn btn-sm btn-secondary w-full">Create Story</button
+								>
 							</div>
-						</button>
+						</div>
 					{:else}
 						<p class="text-gray-500 text-sm p-4 col-span-2">No images found in storage.</p>
 					{/each}
@@ -287,6 +302,41 @@
 						>
 					</div>
 					<img src={selectedImageUrl} alt="Preview" class="w-full h-auto" />
+				</div>
+			</div>
+		{/if}
+
+		<!-- Create Story from Image Modal -->
+		{#if showCreateStoryModal && createStoryImageUrl}
+			<div
+				class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+				on:click={() => (showCreateStoryModal = false)}
+			>
+				<div
+					class="bg-white p-6 rounded-lg shadow-xl max-w-lg w-full"
+					on:click|stopPropagation
+				>
+					<h3 class="text-xl font-semibold mb-4">Create Story from Image</h3>
+					<img src={createStoryImageUrl} alt="Selected" class="w-full h-48 object-cover rounded mb-4" />
+
+					<form method="POST" action="?/createStoryFromImage" use:enhance>
+						<input type="hidden" name="imageUrl" value={createStoryImageUrl} />
+						<textarea
+							name="prompt"
+							class="textarea w-full"
+							rows="3"
+							placeholder="e.g., A story about a brave knight and this castle..."
+							required
+						></textarea>
+						<div class="flex justify-end gap-4 mt-4">
+							<button
+								type="button"
+								on:click={() => (showCreateStoryModal = false)}
+								class="btn btn-ghost">Cancel</button
+							>
+							<button type="submit" class="btn btn-primary">Generate Story</button>
+						</div>
+					</form>
 				</div>
 			</div>
 		{/if}

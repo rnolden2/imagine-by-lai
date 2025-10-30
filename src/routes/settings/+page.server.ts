@@ -1,9 +1,10 @@
 import { getDb } from '$lib/server/db';
-import { fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import type { User, Lesson, Story } from '$lib/types';
-import { GCS_BUCKET_NAME } from '$lib/server/secrets';
+import { GCS_BUCKET_NAME, getGeminiApiKey } from '$lib/server/secrets';
 import { Storage } from '@google-cloud/storage';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const load: PageServerLoad = async () => {
 	const db = getDb();
@@ -243,6 +244,53 @@ export const actions: Actions = {
 		} catch (error) {
 			console.error('Database restore failed:', error);
 			return fail(500, { message: 'Database restore failed.' });
+		}
+	},
+
+	createStoryFromImage: async ({ request }) => {
+		const data = await request.formData();
+		const imageUrl = data.get('imageUrl');
+		const prompt = data.get('prompt');
+
+		if (!imageUrl || !prompt || typeof imageUrl !== 'string' || typeof prompt !== 'string') {
+			return fail(400, { message: 'Image URL and prompt are required.' });
+		}
+
+		try {
+			const apiKey = await getGeminiApiKey();
+			const genAI = new GoogleGenerativeAI(apiKey);
+			const model = genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
+
+			const storage = new Storage();
+			const url = new URL(imageUrl);
+			const bucketName = url.hostname.split('.')[0];
+			const fileName = url.pathname.substring(1);
+
+			const bucket = storage.bucket(bucketName);
+			const file = bucket.file(decodeURIComponent(fileName));
+			const [imageBuffer] = await file.download();
+
+			const imagePart = {
+				inlineData: {
+					data: imageBuffer.toString('base64'),
+					mimeType: 'image/png'
+				}
+			};
+
+			const result = await model.generateContent([prompt, imagePart]);
+			const storyContent = result.response.text();
+
+			const db = getDb();
+			const info = db
+				.prepare(
+					'INSERT INTO stories (prompt, content, image_url, grade_level) VALUES (?, ?, ?, ?)'
+				)
+				.run(prompt, storyContent, imageUrl, '1');
+
+			throw redirect(303, `/story/${info.lastInsertRowid}`);
+		} catch (error) {
+			console.error('Failed to create story from image:', error);
+			return fail(500, { message: 'Failed to create story from image.' });
 		}
 	}
 };
