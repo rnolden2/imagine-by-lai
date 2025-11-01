@@ -18,9 +18,10 @@
 	let storyContentElement: HTMLElement;
 	let lineHeight = 0;
 	let guidePosition = { top: 0, visible: false };
-	let longPressTimer: NodeJS.Timeout | null = null;
-	let isLongPress = false;
-	const LONG_PRESS_DURATION = 500; // 500ms for long press
+	let clickCount = 0;
+	let clickTimer: NodeJS.Timeout | null = null;
+	let lastClickTime = 0;
+	const DOUBLE_CLICK_DELAY = 300; // 300ms window for double-click
 
 	onMount(() => {
 		synth = window.speechSynthesis;
@@ -44,24 +45,39 @@
 		};
 	}
 
-	function handleMouseDown(event: MouseEvent) {
+	function handleClick(event: MouseEvent) {
 		const target = event.target as HTMLElement;
 		// Ensure we're not clicking something inside the popup
 		if (target.closest('.fixed')) return;
 
-		isLongPress = false;
+		const currentTime = Date.now();
+		const timeSinceLastClick = currentTime - lastClickTime;
 
-		// Start timer for long press
-		longPressTimer = setTimeout(() => {
-			isLongPress = true;
-			// Try to get the word at the click position
+		// If this click is within the double-click window, increment count
+		if (timeSinceLastClick < DOUBLE_CLICK_DELAY) {
+			clickCount++;
+		} else {
+			clickCount = 1;
+		}
+
+		lastClickTime = currentTime;
+
+		// Clear any existing timer
+		if (clickTimer) {
+			clearTimeout(clickTimer);
+			clickTimer = null;
+		}
+
+		// If double-click detected, try to show word definition
+		if (clickCount === 2) {
+			clickCount = 0;
 			const selection = window.getSelection();
 			if (!selection || selection.rangeCount === 0) return;
 
 			const range = selection.getRangeAt(0);
 			const node = selection.anchorNode;
 
-			if (node && node.nodeType === Node.TEXT_NODE && range.startOffset === range.endOffset) {
+			if (node && node.nodeType === Node.TEXT_NODE) {
 				const text = node.textContent || '';
 				const clickedChar = text[range.startOffset] || text[range.startOffset - 1];
 				
@@ -85,32 +101,19 @@
 					if (word) {
 						const rect = wordRange.getBoundingClientRect();
 						handleWordSelection(word, rect);
+						return;
 					}
 				}
 			}
-		}, LONG_PRESS_DURATION);
-	}
-
-	function handleMouseUp(event: MouseEvent) {
-		if (longPressTimer) {
-			clearTimeout(longPressTimer);
-			longPressTimer = null;
 		}
 
-		// If it wasn't a long press, treat it as a regular click for reading guide
-		if (!isLongPress) {
-			handleReadingGuideClick(event);
-		}
-		
-		isLongPress = false;
-	}
-
-	function handleMouseLeave() {
-		if (longPressTimer) {
-			clearTimeout(longPressTimer);
-			longPressTimer = null;
-		}
-		isLongPress = false;
+		// Set timer for single-click action (reading guide)
+		clickTimer = setTimeout(() => {
+			if (clickCount === 1) {
+				handleReadingGuideClick(event);
+			}
+			clickCount = 0;
+		}, DOUBLE_CLICK_DELAY);
 	}
 
 	async function handleWordSelection(word: string, rect: DOMRect) {
@@ -206,9 +209,7 @@
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed relative"
-					on:mousedown={handleMouseDown}
-					on:mouseup={handleMouseUp}
-					on:mouseleave={handleMouseLeave}
+					on:click={handleClick}
 					bind:this={storyContentElement}
 				>
 					<ReadingGuideLine
