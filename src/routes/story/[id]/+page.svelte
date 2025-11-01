@@ -18,6 +18,9 @@
 	let storyContentElement: HTMLElement;
 	let lineHeight = 0;
 	let guidePosition = { top: 0, visible: false };
+	let longPressTimer: NodeJS.Timeout | null = null;
+	let isLongPress = false;
+	const LONG_PRESS_DURATION = 500; // 500ms for long press
 
 	onMount(() => {
 		synth = window.speechSynthesis;
@@ -41,65 +44,73 @@
 		};
 	}
 
-	// This function is no longer needed as we are not iterating over words
-	// async function handleWordClick(event: MouseEvent | KeyboardEvent, word: string) { ... }
-	function handleContentClick(event: MouseEvent) {
+	function handleMouseDown(event: MouseEvent) {
 		const target = event.target as HTMLElement;
 		// Ensure we're not clicking something inside the popup
 		if (target.closest('.fixed')) return;
 
-		// Check if shift key is held - if so, always show reading guide
-		if (event.shiftKey) {
-			handleReadingGuideClick(event);
-			return;
-		}
+		isLongPress = false;
 
-		// Logic to get the specific word clicked
-		const selection = window.getSelection();
-		if (!selection || selection.rangeCount === 0) {
-			handleReadingGuideClick(event);
-			return;
-		}
+		// Start timer for long press
+		longPressTimer = setTimeout(() => {
+			isLongPress = true;
+			// Try to get the word at the click position
+			const selection = window.getSelection();
+			if (!selection || selection.rangeCount === 0) return;
 
-		const range = selection.getRangeAt(0);
-		const node = selection.anchorNode;
+			const range = selection.getRangeAt(0);
+			const node = selection.anchorNode;
 
-		// If the user clicked, not selected a range
-		if (node && node.nodeType === Node.TEXT_NODE && range.startOffset === range.endOffset) {
-			// Get the character at the click position
-			const text = node.textContent || '';
-			const clickedChar = text[range.startOffset] || text[range.startOffset - 1];
-			
-			// Only trigger word lookup if clicking on an actual word character
-			// If clicking on whitespace or punctuation, show reading guide instead
-			if (clickedChar && clickedChar.match(/\w/)) {
-				// Expand the range to the word boundaries
-				const wordRange = document.createRange();
+			if (node && node.nodeType === Node.TEXT_NODE && range.startOffset === range.endOffset) {
+				const text = node.textContent || '';
+				const clickedChar = text[range.startOffset] || text[range.startOffset - 1];
+				
+				if (clickedChar && clickedChar.match(/\w/)) {
+					const wordRange = document.createRange();
 
-				let start = range.startOffset;
-				while (start > 0 && text[start - 1].match(/\w/)) {
-					start--;
-				}
+					let start = range.startOffset;
+					while (start > 0 && text[start - 1].match(/\w/)) {
+						start--;
+					}
 
-				let end = range.startOffset;
-				while (end < text.length && text[end].match(/\w/)) {
-					end++;
-				}
+					let end = range.startOffset;
+					while (end < text.length && text[end].match(/\w/)) {
+						end++;
+					}
 
-				wordRange.setStart(node, start);
-				wordRange.setEnd(node, end);
+					wordRange.setStart(node, start);
+					wordRange.setEnd(node, end);
 
-				const word = wordRange.toString().trim();
-				if (word) {
-					const rect = wordRange.getBoundingClientRect();
-					handleWordSelection(word, rect);
-					return;
+					const word = wordRange.toString().trim();
+					if (word) {
+						const rect = wordRange.getBoundingClientRect();
+						handleWordSelection(word, rect);
+					}
 				}
 			}
+		}, LONG_PRESS_DURATION);
+	}
+
+	function handleMouseUp(event: MouseEvent) {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+
+		// If it wasn't a long press, treat it as a regular click for reading guide
+		if (!isLongPress) {
+			handleReadingGuideClick(event);
 		}
 		
-		// Default to showing reading guide for all other cases
-		handleReadingGuideClick(event);
+		isLongPress = false;
+	}
+
+	function handleMouseLeave() {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+		isLongPress = false;
 	}
 
 	async function handleWordSelection(word: string, rect: DOMRect) {
@@ -110,9 +121,40 @@
 		isLoading = true;
 		wordData = null;
 
+		// Calculate popup position, ensuring it stays within viewport
+		const POPUP_WIDTH = 256; // w-64 class = 16rem = 256px
+		const POPUP_MARGIN = 10; // margin from edge
+		const viewportWidth = window.innerWidth;
+		const viewportHeight = window.innerHeight;
+
+		let left = rect.left;
+		let top = rect.bottom + 5;
+
+		// Check if popup would go off the right edge
+		if (left + POPUP_WIDTH + POPUP_MARGIN > viewportWidth) {
+			left = viewportWidth - POPUP_WIDTH - POPUP_MARGIN;
+		}
+
+		// Check if popup would go off the left edge
+		if (left < POPUP_MARGIN) {
+			left = POPUP_MARGIN;
+		}
+
+		// Check if popup would go off the bottom edge
+		// Estimate popup height (can vary, but typically around 200px)
+		const estimatedPopupHeight = 200;
+		if (top + estimatedPopupHeight > viewportHeight) {
+			// Position above the word instead
+			top = rect.top - estimatedPopupHeight - 5;
+			// If still off-screen at top, position at top margin
+			if (top < POPUP_MARGIN) {
+				top = POPUP_MARGIN;
+			}
+		}
+
 		popupPosition = {
-			top: rect.bottom + 5,
-			left: rect.left
+			top,
+			left
 		};
 
 		// Check cache first
@@ -164,7 +206,9 @@
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed relative"
-					on:click|capture={handleContentClick}
+					on:mousedown={handleMouseDown}
+					on:mouseup={handleMouseUp}
+					on:mouseleave={handleMouseLeave}
 					bind:this={storyContentElement}
 				>
 					<ReadingGuideLine
