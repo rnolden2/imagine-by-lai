@@ -4,6 +4,7 @@ import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai'
 import { Storage } from '@google-cloud/storage';
 import { getGeminiApiKey, GCS_BUCKET_NAME } from '$lib/server/secrets';
 import { getDb } from '$lib/server/db';
+import { backupDatabaseAsync } from '$lib/server/backup';
 import type { PageServerLoad } from './$types';
 import type { User, Story } from '$lib/types';
 
@@ -411,7 +412,10 @@ export const actions: Actions = {
 
 			console.log(`Story saved to database with ID: ${info.lastInsertRowid}`);
 
-			// 4. Redirect to the new story
+			// 4. Trigger automatic backup (async, non-blocking)
+			backupDatabaseAsync();
+
+			// 5. Redirect to the new story
 			throw redirect(303, `/story/${info.lastInsertRowid}`);
 		} catch (error) {
 			// Handle redirects

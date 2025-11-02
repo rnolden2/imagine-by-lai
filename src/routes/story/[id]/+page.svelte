@@ -18,10 +18,11 @@
 	let storyContentElement: HTMLElement;
 	let lineHeight = 0;
 	let guidePosition = { top: 0, visible: false };
-	let clickCount = 0;
-	let clickTimer: NodeJS.Timeout | null = null;
-	let lastClickTime = 0;
-	const DOUBLE_CLICK_DELAY = 300; // 300ms window for double-click
+	let longPressTimer: NodeJS.Timeout | null = null;
+	let isLongPress = false;
+	let touchStartPos = { x: 0, y: 0 };
+	const LONG_PRESS_DURATION = 500; // 500ms for long press
+	const MOVE_THRESHOLD = 10; // pixels allowed to move during long press
 
 	onMount(() => {
 		synth = window.speechSynthesis;
@@ -45,75 +46,131 @@
 		};
 	}
 
-	function handleClick(event: MouseEvent) {
+	function handleMouseDown(event: MouseEvent) {
 		const target = event.target as HTMLElement;
-		// Ensure we're not clicking something inside the popup
 		if (target.closest('.fixed')) return;
 
-		const currentTime = Date.now();
-		const timeSinceLastClick = currentTime - lastClickTime;
+		isLongPress = false;
+		touchStartPos = { x: event.clientX, y: event.clientY };
 
-		// If this click is within the double-click window, increment count
-		if (timeSinceLastClick < DOUBLE_CLICK_DELAY) {
-			clickCount++;
-		} else {
-			clickCount = 1;
+		longPressTimer = setTimeout(() => {
+			isLongPress = true;
+			tryShowWordDefinition(event.clientX, event.clientY);
+		}, LONG_PRESS_DURATION);
+	}
+
+	function handleMouseUp(event: MouseEvent) {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
 		}
 
-		lastClickTime = currentTime;
+		if (!isLongPress) {
+			handleReadingGuideClick(event);
+		}
+		
+		isLongPress = false;
+	}
 
-		// Clear any existing timer
-		if (clickTimer) {
-			clearTimeout(clickTimer);
-			clickTimer = null;
+	function handleMouseMove(event: MouseEvent) {
+		if (!longPressTimer) return;
+
+		const moved = Math.abs(event.clientX - touchStartPos.x) > MOVE_THRESHOLD ||
+		              Math.abs(event.clientY - touchStartPos.y) > MOVE_THRESHOLD;
+		
+		if (moved && longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
+
+	function handleTouchStart(event: TouchEvent) {
+		const target = event.target as HTMLElement;
+		if (target.closest('.fixed')) return;
+
+		const touch = event.touches[0];
+		isLongPress = false;
+		touchStartPos = { x: touch.clientX, y: touch.clientY };
+
+		longPressTimer = setTimeout(() => {
+			isLongPress = true;
+			event.preventDefault(); // Prevent text selection menu
+			tryShowWordDefinition(touch.clientX, touch.clientY);
+		}, LONG_PRESS_DURATION);
+	}
+
+	function handleTouchEnd(event: TouchEvent) {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
 		}
 
-		// If double-click detected, try to show word definition
-		if (clickCount === 2) {
-			clickCount = 0;
-			const selection = window.getSelection();
-			if (!selection || selection.rangeCount === 0) return;
+		if (!isLongPress && event.changedTouches.length > 0) {
+			const touch = event.changedTouches[0];
+			handleReadingGuideClick({ clientY: touch.clientY } as MouseEvent);
+		}
+		
+		isLongPress = false;
+	}
 
-			const range = selection.getRangeAt(0);
-			const node = selection.anchorNode;
+	function handleTouchMove(event: TouchEvent) {
+		if (!longPressTimer || event.touches.length === 0) return;
 
-			if (node && node.nodeType === Node.TEXT_NODE) {
-				const text = node.textContent || '';
-				const clickedChar = text[range.startOffset] || text[range.startOffset - 1];
-				
-				if (clickedChar && clickedChar.match(/\w/)) {
-					const wordRange = document.createRange();
+		const touch = event.touches[0];
+		const moved = Math.abs(touch.clientX - touchStartPos.x) > MOVE_THRESHOLD ||
+		              Math.abs(touch.clientY - touchStartPos.y) > MOVE_THRESHOLD;
+		
+		if (moved && longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+	}
 
-					let start = range.startOffset;
-					while (start > 0 && text[start - 1].match(/\w/)) {
-						start--;
-					}
+	function handleTouchCancel() {
+		if (longPressTimer) {
+			clearTimeout(longPressTimer);
+			longPressTimer = null;
+		}
+		isLongPress = false;
+	}
 
-					let end = range.startOffset;
-					while (end < text.length && text[end].match(/\w/)) {
-						end++;
-					}
+	function tryShowWordDefinition(clientX: number, clientY: number) {
+		const selection = window.getSelection();
+		if (!selection) return;
 
-					wordRange.setStart(node, start);
-					wordRange.setEnd(node, end);
+		// Create a range at the click/touch position
+		const range = document.caretRangeFromPoint(clientX, clientY);
+		if (!range) return;
 
-					const word = wordRange.toString().trim();
-					if (word) {
-						const rect = wordRange.getBoundingClientRect();
-						handleWordSelection(word, rect);
-						return;
-					}
+		const node = range.startContainer;
+		if (node && node.nodeType === Node.TEXT_NODE) {
+			const text = node.textContent || '';
+			const offset = range.startOffset;
+			const clickedChar = text[offset] || text[offset - 1];
+			
+			if (clickedChar && clickedChar.match(/\w/)) {
+				const wordRange = document.createRange();
+
+				let start = offset;
+				while (start > 0 && text[start - 1].match(/\w/)) {
+					start--;
+				}
+
+				let end = offset;
+				while (end < text.length && text[end].match(/\w/)) {
+					end++;
+				}
+
+				wordRange.setStart(node, start);
+				wordRange.setEnd(node, end);
+
+				const word = wordRange.toString().trim();
+				if (word) {
+					const rect = wordRange.getBoundingClientRect();
+					handleWordSelection(word, rect);
 				}
 			}
 		}
-
-		// Set timer for single-click action (reading guide)
-		clickTimer = setTimeout(() => {
-			if (clickCount === 1) {
-				handleReadingGuideClick(event);
-			}
-			clickCount = 0;
-		}, DOUBLE_CLICK_DELAY);
 	}
 
 	async function handleWordSelection(word: string, rect: DOMRect) {
@@ -209,7 +266,13 @@
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed relative"
-					on:click={handleClick}
+					on:mousedown={handleMouseDown}
+					on:mouseup={handleMouseUp}
+					on:mousemove={handleMouseMove}
+					on:touchstart={handleTouchStart}
+					on:touchend={handleTouchEnd}
+					on:touchmove={handleTouchMove}
+					on:touchcancel={handleTouchCancel}
 					bind:this={storyContentElement}
 				>
 					<ReadingGuideLine

@@ -5,6 +5,7 @@ import type { User, Lesson, Story } from '$lib/types';
 import { GCS_BUCKET_NAME, getGeminiApiKey } from '$lib/server/secrets';
 import { Storage } from '@google-cloud/storage';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { backupDatabase } from '$lib/server/backup';
 
 export const load: PageServerLoad = async () => {
 	const db = getDb();
@@ -182,29 +183,14 @@ export const actions: Actions = {
 
 	backupDatabase: async () => {
 		try {
-			const { GCS_BUCKET_NAME } = await import('$lib/server/secrets');
-			const { Storage } = await import('@google-cloud/storage');
-			const fs = await import('fs/promises');
-
-			if (!GCS_BUCKET_NAME) {
-				return fail(500, { message: 'GCS_BUCKET_NAME is not configured.' });
+			// Use the shared backup utility with closeDb=true for manual backups
+			const result = await backupDatabase(true);
+			
+			if (result.success) {
+				return { success: true, message: result.message };
+			} else {
+				return fail(500, { message: result.message });
 			}
-
-			const storage = new Storage();
-			const bucket = storage.bucket(GCS_BUCKET_NAME);
-
-			const db = getDb();
-			// Close the connection to ensure WAL is flushed to the main DB file
-			db.close();
-
-			const dbBuffer = await fs.readFile('imagine.db');
-			const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-			const fileName = `backups/backup-${timestamp}.db`;
-			const file = bucket.file(fileName);
-
-			await file.save(dbBuffer);
-
-			return { success: true, message: `Database backed up to ${fileName}` };
 		} catch (error) {
 			console.error('Database backup failed:', error);
 			return fail(500, { message: 'Database backup failed.' });
