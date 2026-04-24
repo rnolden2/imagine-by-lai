@@ -1,0 +1,44 @@
+export const GRADE_WORD_LISTS: Record<string, string[]> = {
+	TK: [
+		'cat', 'dog', 'sun', 'red', 'big', 'hot', 'cup', 'hat', 'map', 'run',
+		'bed', 'sit', 'top', 'fan', 'leg', 'bug', 'pin', 'fox', 'wet', 'zip',
+		'am',  'at',  'it',  'on',  'up',  'go',  'do',  'me',  'we',  'be',
+		'car', 'jar', 'ham', 'jam', 'bin', 'win', 'hit', 'bit', 'lot', 'dot',
+		'nap', 'tap', 'cap', 'mat', 'bat', 'rat', 'sad', 'mad', 'bad', 'dad'
+	],
+	K: [
+		'the',  'and',  'was',  'for',  'you',  'are',  'but',  'not',  'his', 'her',
+		'they', 'all',  'said', 'have', 'with', 'that', 'this', 'will', 'she', 'what',
+		'when', 'who',  'can',  'did',  'get',  'how',  'now',  'put',  'see', 'too',
+		'him',  'old',  'one',  'our',  'out',  'two',  'day',  'way',  'may', 'say',
+		'play', 'rain', 'cake', 'make', 'take', 'lake', 'name', 'game', 'came', 'like'
+	],
+	'1': [
+		'jump',   'help',   'land',   'hand',   'cold',   'gold',   'most',   'first',  'girl',   'bird',
+		'word',   'work',   'great',  'again',  'even',   'learn',  'found',  'every',  'family', 'place',
+		'away',   'here',   'come',   'some',   'love',   'move',   'live',   'give',   'very',   'over',
+		'only',   'also',   'same',   'tell',   'back',   'down',   'good',   'long',   'look',   'next',
+		'think',  'people', 'water',  'after',  'little', 'know',   'just',   'around', 'about',  'once'
+	],
+	'2': [
+		'because',    'beautiful',  'different',  'friend',     'enough',     'usually',    'really',     'thought',    'through',    'brought',
+		'whole',      'write',      'night',      'might',      'light',      'right',      'eight',      'weight',     'their',      'where',
+		'piece',      'believe',    'receive',    'special',    'school',     'money',      'pretty',     'ready',      'together',   'something',
+		'morning',    'garden',     'started',    'children',   'wanted',     'better',     'picture',    'answer',     'always',     'between',
+		'change',     'almost',     'second',     'outside',    'important',  'nothing',    'anyone',     'everyone',   'although',   'another'
+	],
+	'3': [
+		'probably',   'necessary',  'interesting','beginning',  'imagine',    'possible',   'question',   'certain',    'surprise',   'separate',
+		'calendar',   'general',    'knowledge',  'language',   'library',    'measure',    'natural',    'opposite',   'position',   'purpose',
+		'several',    'similar',    'strange',    'system',     'thousand',   'valuable',   'various',    'whether',    'without',    'wonder',
+		'careful',    'decided',    'entire',     'expect',     'favorite',   'forward',    'happily',    'inside',     'instead',    'mention',
+		'middle',     'nature',     'normal',     'quiet',      'recent',     'result',     'toward',     'written',    'already',    'describe'
+	],
+	'4': [
+		'accomplish',     'accurate',       'advantage',      'ancient',        'argument',       'atmosphere',     'available',      'behavior',       'beneath',        'challenge',
+		'communicate',    'compare',        'competition',    'conclusion',     'consider',       'contrast',       'convenient',     'curious',        'decision',       'definite',
+		'determine',      'develop',        'difficult',      'discipline',     'discovery',      'environment',    'especially',     'evidence',       'experience',     'experiment',
+		'explanation',    'extremely',      'familiar',       'government',     'guarantee',      'independent',    'individual',     'intelligence',   'maintain',       'magnificent',
+		'manufacture',    'organize',       'particular',     'population',     'significant',    'understand',     'vocabulary',     'concentrate',    'fascinating',    'demonstrate'
+	]
+};
