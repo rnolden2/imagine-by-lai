@@ -97,7 +97,7 @@
 	}
 
 	// ── Answer input & feedback ──────────────────────────────────────
-	let userAnswer = '';
+	let userAnswer: string = '';
 	let feedback: 'correct' | 'wrong' | null = null;
 	let showCorrectAnswer = false;
 	let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -176,7 +176,7 @@
 		<div class="mb-8 text-center">
 			<h2 class="text-xl font-semibold mb-4">Who is doing math today?</h2>
 			<div class="flex gap-4 flex-wrap justify-center">
-				{#each data.users as user}
+				{#each data.users as user (user.id)}
 					<button
 						on:click={() => selectUser(user)}
 						class="px-6 py-3 rounded-xl shadow font-bold text-black bg-primary hover:opacity-90 transition-all text-lg"
@@ -247,24 +247,24 @@
 			{/if}
 
 			<!-- Answer input -->
-			<div class="flex gap-4 w-full items-center">
+			<div class="flex flex-col items-center gap-4 w-full">
 				<input
 					bind:this={inputEl}
 					bind:value={userAnswer}
 					on:keydown={handleKeydown}
-					type="number"
+					type="text"
 					inputmode="numeric"
 					pattern="[0-9]*"
 					placeholder="?"
 					disabled={feedback !== null}
-					class="flex-1 text-center text-5xl font-black rounded-2xl border-4 border-gray-200 focus:border-primary focus:outline-none py-4 transition-colors disabled:opacity-50"
+					class="w-48 text-center text-5xl font-black rounded-2xl border-4 border-gray-200 focus:border-primary focus:outline-none py-4 transition-colors disabled:opacity-50"
 				/>
 				<button
 					on:click={submitAnswer}
 					disabled={feedback !== null || userAnswer.trim() === ''}
-					class="bg-primary text-black font-bold text-lg px-8 py-4 rounded-2xl hover:opacity-90 transition-opacity shadow disabled:opacity-40 disabled:cursor-not-allowed"
+					class="bg-primary text-black font-bold text-xl px-12 py-4 rounded-2xl hover:opacity-90 transition-opacity shadow disabled:opacity-40 disabled:cursor-not-allowed"
 				>
-					Check
+					Check ✓
 				</button>
 			</div>
 

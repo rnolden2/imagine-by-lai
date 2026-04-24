@@ -17,7 +17,9 @@ export async function backupDatabase(closeDb = false): Promise<{
 			throw new Error('GCS_BUCKET_NAME is not configured');
 		}
 
+		// const storage = new Storage();
 		const storage = new Storage();
+
 		const bucket = storage.bucket(GCS_BUCKET_NAME);
 		const fs = await import('fs/promises');
 

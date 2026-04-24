@@ -277,6 +277,216 @@
 			</button>
 		</form>
 
+	<!-- Spelling Settings -->
+	<div class="bg-white p-6 rounded-lg shadow col-span-1 md:col-span-2">
+		<h2 class="text-xl font-semibold mb-6">Spelling Settings</h2>
+
+		<!-- Add custom word -->
+		<div class="mb-6">
+			<h3 class="font-semibold text-gray-700 mb-3">Add Custom Word</h3>
+			<form method="POST" action="?/addSpellingWord" use:enhance class="flex flex-wrap gap-3 items-end">
+				<div class="flex flex-col gap-1">
+					<label class="text-xs font-semibold text-gray-500">Word</label>
+					<input type="text" name="word" placeholder="e.g. penguin" class="input" required autocorrect="off" autocapitalize="off" />
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-xs font-semibold text-gray-500">Grade</label>
+					<select name="grade" class="select" required>
+						<option disabled selected>Grade</option>
+						{#each ['TK', 'K', '1', '2', '3', '4'] as g}
+							<option value={g}>{g}</option>
+						{/each}
+					</select>
+				</div>
+				<button type="submit" class="btn btn-primary">Add Word</button>
+			</form>
+		</div>
+
+		<!-- Custom word lists by grade -->
+		{#if data.spellingWords.length > 0}
+			<div class="mb-8">
+				<h3 class="font-semibold text-gray-700 mb-3">Custom Words</h3>
+				<div class="space-y-4">
+					{#each ['TK', 'K', '1', '2', '3', '4'] as grade}
+						{@const gradeWords = data.spellingWords.filter((w) => w.grade === grade)}
+						{#if gradeWords.length > 0}
+							<div>
+								<p class="text-sm font-semibold text-gray-500 mb-2">Grade {grade}</p>
+								<div class="flex flex-wrap gap-2">
+									{#each gradeWords as w}
+										<div class="flex items-center gap-1 px-3 py-1 bg-primary/10 rounded-full">
+											<span class="text-sm font-semibold">{w.word}</span>
+											<form method="POST" action="?/deleteSpellingWord" use:enhance>
+												<input type="hidden" name="id" value={w.id} />
+												<button type="submit" class="text-gray-400 hover:text-red-500 text-lg leading-none ml-1">&times;</button>
+											</form>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					{/each}
+				</div>
+			</div>
+		{:else}
+			<p class="text-sm text-gray-400 mb-8">No custom words yet. The built-in grade lists (50 words each) are used by default.</p>
+		{/if}
+
+		<!-- Stats -->
+		{#if data.spellingStats.length > 0}
+			<div>
+				<div class="flex justify-between items-center mb-3">
+					<h3 class="font-semibold text-lg">Session History</h3>
+					<form method="POST" action="?/clearSpellingStats" use:enhance>
+						<button
+							type="submit"
+							class="text-sm text-red-500 hover:text-red-700"
+							on:click={(e) => { if (!confirm('Clear all spelling stats?')) e.preventDefault(); }}
+						>Clear all stats</button>
+					</form>
+				</div>
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm border-collapse">
+						<thead>
+							<tr class="bg-gray-50 text-left">
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b">Date</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b">User</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b">Grade</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b text-center">Correct</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b text-center">Total</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b text-center">Score</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each data.spellingStats as session}
+								{@const pct = Math.round((session.correct / session.total) * 100)}
+								<tr class="border-b hover:bg-gray-50">
+									<td class="px-4 py-2 text-gray-600">
+										{new Date(session.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+									</td>
+									<td class="px-4 py-2 font-medium">{session.user_name ?? 'Unknown'}</td>
+									<td class="px-4 py-2 text-gray-500">{session.grade}</td>
+									<td class="px-4 py-2 text-center text-green-600 font-semibold">{session.correct}</td>
+									<td class="px-4 py-2 text-center text-gray-500">{session.total}</td>
+									<td class="px-4 py-2 text-center">
+										<span class="px-2 py-1 rounded-full text-xs font-bold {pct >= 80 ? 'bg-green-100 text-green-700' : pct >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">
+											{pct}%
+										</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{:else}
+			<p class="text-gray-400 text-sm">No spelling sessions recorded yet.</p>
+		{/if}
+	</div>
+
+	<!-- Math Settings -->
+	<div class="bg-white p-6 rounded-lg shadow col-span-1 md:col-span-2">
+		<h2 class="text-xl font-semibold mb-6">Math Practice Settings</h2>
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+			{#each data.users as user}
+				{@const saved = data.mathSettings.find((s) => s.user_id === user.id)}
+				{@const currentOps = saved ? saved.operations.split(',') : user.grade === 'TK' || user.grade === 'K' ? ['addition'] : user.grade === '1' ? ['addition', 'subtraction'] : ['addition', 'subtraction', 'multiplication']}
+				{@const currentMax = saved ? saved.max_number : user.grade === 'TK' || user.grade === 'K' ? 10 : user.grade === '1' ? 10 : 100}
+
+				<div class="border rounded-xl p-4">
+					<h3 class="font-bold text-lg mb-4">{user.name} <span class="text-sm font-normal text-gray-500">(Grade {user.grade})</span></h3>
+
+					<form method="POST" action="?/saveMathSettings" use:enhance class="space-y-4">
+						<input type="hidden" name="userId" value={user.id} />
+
+						<fieldset>
+							<legend class="text-sm font-semibold text-gray-700 mb-2">Operations</legend>
+							<div class="flex flex-wrap gap-2">
+								{#each ['addition', 'subtraction', 'multiplication', 'division'] as op}
+									<label class="flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer hover:bg-gray-50 transition-colors {currentOps.includes(op) ? 'border-primary bg-primary/10 font-semibold' : 'border-gray-200'}">
+										<input
+											type="checkbox"
+											name="operations"
+											value={op}
+											checked={currentOps.includes(op)}
+											class="accent-primary"
+										/>
+										<span class="capitalize text-sm">{op}</span>
+									</label>
+								{/each}
+							</div>
+						</fieldset>
+
+						<fieldset>
+							<legend class="text-sm font-semibold text-gray-700 mb-2">Number Range</legend>
+							<select name="maxNumber" class="select w-full">
+								{#each [10, 100, 1000] as range}
+									<option value={range} selected={currentMax === range}>1 – {range}</option>
+								{/each}
+							</select>
+						</fieldset>
+
+						<button type="submit" class="btn btn-primary w-full">Save Settings</button>
+					</form>
+
+					<form method="POST" action="?/clearMathStats" use:enhance class="mt-3">
+						<input type="hidden" name="userId" value={user.id} />
+						<button
+							type="submit"
+							class="text-sm text-red-500 hover:text-red-700 w-full text-center"
+							on:click={(e) => { if (!confirm('Clear all math stats for ' + user.name + '?')) e.preventDefault(); }}
+						>
+							Clear stats for {user.name}
+						</button>
+					</form>
+				</div>
+			{:else}
+				<p class="text-gray-500 col-span-2">No users yet. Add a user above first.</p>
+			{/each}
+		</div>
+
+		<!-- Stats -->
+		{#if data.mathStats.length > 0}
+			<div>
+				<h3 class="font-semibold text-lg mb-3">Session History</h3>
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm border-collapse">
+						<thead>
+							<tr class="bg-gray-50 text-left">
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b">Date</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b">User</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b text-center">Correct</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b text-center">Total</th>
+								<th class="px-4 py-2 font-semibold text-gray-600 border-b text-center">Score</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each data.mathStats as session}
+								{@const pct = Math.round((session.correct / session.total) * 100)}
+								<tr class="border-b hover:bg-gray-50">
+									<td class="px-4 py-2 text-gray-600">
+										{new Date(session.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+									</td>
+									<td class="px-4 py-2 font-medium">{session.user_name ?? 'Unknown'}</td>
+									<td class="px-4 py-2 text-center text-green-600 font-semibold">{session.correct}</td>
+									<td class="px-4 py-2 text-center text-gray-500">{session.total}</td>
+									<td class="px-4 py-2 text-center">
+										<span class="px-2 py-1 rounded-full text-xs font-bold {pct >= 80 ? 'bg-green-100 text-green-700' : pct >= 60 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}">
+											{pct}%
+										</span>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{:else}
+			<p class="text-gray-400 text-sm">No math sessions recorded yet.</p>
+		{/if}
+	</div>
+
 		<!-- Image Preview Modal -->
 		{#if showImagePreview && selectedImageUrl}
 			<!-- svelte-ignore a11y-click-events-have-key-events -->

@@ -63,7 +63,7 @@
 	}
 </script>
 
-<div class="fixed inset-0 bg-blue-200 bg-opacity-90 z-50">
+<div class="fixed inset-0 bg-blue-200 bg-opacity-90 z-[100]">
 	<div class="relative w-full h-full">
 		{#each puppies as puppy (puppy.id)}
 			<button

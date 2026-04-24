@@ -12,6 +12,7 @@ if (!GCS_BUCKET_NAME) {
 	throw new Error('Missing GCS_BUCKET_NAME environment variable.');
 }
 
+// const storage = new Storage();
 const storage = new Storage();
 const bucket = storage.bucket(GCS_BUCKET_NAME);
 
@@ -19,9 +20,9 @@ export const load: PageServerLoad = async () => {
 	const db = getDb();
 	const users = db.prepare('SELECT * FROM users').all() as User[];
 	const stories = db.prepare('SELECT * FROM stories ORDER BY created_at DESC').all() as Story[];
-	
+
 	let latestBackup: { name: string; timeCreated: string } | null = null;
-	
+
 	// Fetch latest backup if no stories exist
 	if (stories.length === 0 && GCS_BUCKET_NAME) {
 		try {
@@ -33,7 +34,7 @@ export const load: PageServerLoad = async () => {
 					timeCreated: file.metadata.timeCreated as string
 				}))
 				.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
-			
+
 			if (backups.length > 0) {
 				latestBackup = backups[0];
 			}
@@ -41,7 +42,7 @@ export const load: PageServerLoad = async () => {
 			console.error('Failed to fetch latest backup:', error);
 		}
 	}
-	
+
 	return { users, stories, latestBackup };
 };
 

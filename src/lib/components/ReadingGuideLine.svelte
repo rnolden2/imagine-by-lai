@@ -16,7 +16,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    background-color: rgba(255, 255, 0, 0.2);
+    background-color: rgba(255, 255, 0, 0.35);
     z-index: 1;
     pointer-events: none;
     transition: top 0.1s ease-out;

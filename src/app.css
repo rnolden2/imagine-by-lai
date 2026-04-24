@@ -16,4 +16,8 @@
 		--color-primary: 52 211 153; /* emerald-400 */
 		--color-secondary: 34 211 238; /* cyan-400 */
 	}
+
+	body {
+		font-family: 'Nunito', sans-serif;
+	}
 }

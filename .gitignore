@@ -32,3 +32,5 @@ static/robots.txt
 
 # Documentation
 docs/
+resources/
+src/lib/server/api-project.json

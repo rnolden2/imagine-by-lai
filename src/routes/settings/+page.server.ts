@@ -1,7 +1,7 @@
 import { getDb } from '$lib/server/db';
 import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
-import type { User, Lesson, Story } from '$lib/types';
+import type { User, Lesson, Story, MathSettings, MathSessionSummary, SpellingWord, SpellingSessionSummary } from '$lib/types';
 import { GCS_BUCKET_NAME, getGeminiApiKey } from '$lib/server/secrets';
 import { Storage } from '@google-cloud/storage';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -25,6 +25,7 @@ export const load: PageServerLoad = async () => {
 			gcsError = 'GCS_BUCKET_NAME environment variable is not configured';
 			console.warn('GCS_BUCKET_NAME not set - image assignment features will be limited');
 		} else {
+			// const storage = new Storage();
 			const storage = new Storage();
 			const bucket = storage.bucket(GCS_BUCKET_NAME);
 
@@ -83,6 +84,36 @@ export const load: PageServerLoad = async () => {
 		gcsError = `Google Cloud Storage error: ${error instanceof Error ? error.message : 'Unknown error'}`;
 	}
 
+	const mathSettings = db.prepare('SELECT * FROM math_settings').all() as MathSettings[];
+	const mathStats = db
+		.prepare(
+			`SELECT u.name as user_name, ma.session_id,
+              MIN(ma.created_at) as started_at,
+              COUNT(*) as total,
+              SUM(ma.is_correct) as correct
+       FROM math_attempts ma
+       LEFT JOIN users u ON ma.user_id = u.id
+       GROUP BY ma.session_id
+       ORDER BY started_at DESC
+       LIMIT 100`
+		)
+		.all() as MathSessionSummary[];
+
+	const spellingWords = db.prepare('SELECT * FROM spelling_words ORDER BY grade, word').all() as SpellingWord[];
+	const spellingStats = db
+		.prepare(
+			`SELECT u.name as user_name, sa.session_id, sa.grade,
+              MIN(sa.created_at) as started_at,
+              COUNT(*) as total,
+              SUM(sa.is_correct) as correct
+       FROM spelling_attempts sa
+       LEFT JOIN users u ON sa.user_id = u.id
+       GROUP BY sa.session_id
+       ORDER BY started_at DESC
+       LIMIT 100`
+		)
+		.all() as SpellingSessionSummary[];
+
 	return {
 		users,
 		lessons,
@@ -90,7 +121,11 @@ export const load: PageServerLoad = async () => {
 		storiesWithoutImages,
 		availableImages,
 		backups,
-		gcsError
+		gcsError,
+		mathSettings,
+		mathStats,
+		spellingWords,
+		spellingStats
 	};
 };
 
@@ -160,7 +195,7 @@ export const actions: Actions = {
 
 		try {
 			const db = getDb();
-			
+
 			// Verify the story exists
 			const story = db.prepare('SELECT id FROM stories WHERE id = ?').get(storyId);
 			if (!story) {
@@ -170,10 +205,10 @@ export const actions: Actions = {
 			// Update the story with the image URL
 			db.prepare('UPDATE stories SET image_url = ? WHERE id = ?').run(imageUrl, storyId);
 
-			return { 
-				success: true, 
+			return {
+				success: true,
 				message: `Image successfully assigned to story #${storyId}`,
-				storyId 
+				storyId
 			};
 		} catch (error) {
 			console.error('Failed to assign image to story:', error);
@@ -185,7 +220,7 @@ export const actions: Actions = {
 		try {
 			// Use the shared backup utility with closeDb=true for manual backups
 			const result = await backupDatabase(true);
-			
+
 			if (result.success) {
 				return { success: true, message: result.message };
 			} else {
@@ -214,6 +249,7 @@ export const actions: Actions = {
 				return fail(500, { message: 'GCS_BUCKET_NAME is not configured.' });
 			}
 
+			// const storage = new Storage();
 			const storage = new Storage();
 			const bucket = storage.bucket(GCS_BUCKET_NAME);
 			const file = bucket.file(fileName);
@@ -226,11 +262,88 @@ export const actions: Actions = {
 
 			await fs.rename(tempPath, 'imagine.db');
 
-			return { success: true, message: 'Database restored successfully. Please restart the server.' };
+			return {
+				success: true,
+				message: 'Database restored successfully. Please restart the server.'
+			};
 		} catch (error) {
 			console.error('Database restore failed:', error);
 			return fail(500, { message: 'Database restore failed.' });
 		}
+	},
+
+	saveMathSettings: async ({ request }) => {
+		const data = await request.formData();
+		const userId = data.get('userId');
+		const maxNumber = data.get('maxNumber');
+		const rawOps = data.getAll('operations');
+
+		if (!userId || !maxNumber || rawOps.length === 0) {
+			return fail(400, { message: 'Math settings: userId, maxNumber, and at least one operation are required.' });
+		}
+
+		const operations = rawOps.join(',');
+		const db = getDb();
+		db.prepare(
+			`INSERT INTO math_settings (user_id, operations, max_number, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(user_id) DO UPDATE SET
+         operations = excluded.operations,
+         max_number = excluded.max_number,
+         updated_at = CURRENT_TIMESTAMP`
+		).run(userId, operations, parseInt(maxNumber as string));
+
+		return { success: true };
+	},
+
+	addSpellingWord: async ({ request }) => {
+		const data = await request.formData();
+		const word = (data.get('word') as string)?.trim().toLowerCase();
+		const grade = data.get('grade') as string;
+
+		if (!word || !grade) {
+			return fail(400, { message: 'Word and grade are required.' });
+		}
+
+		const db = getDb();
+		const exists = db.prepare('SELECT id FROM spelling_words WHERE word = ? AND grade = ?').get(word, grade);
+		if (exists) {
+			return fail(400, { message: `"${word}" already exists for grade ${grade}.` });
+		}
+		db.prepare('INSERT INTO spelling_words (word, grade) VALUES (?, ?)').run(word, grade);
+		return { success: true };
+	},
+
+	deleteSpellingWord: async ({ request }) => {
+		const data = await request.formData();
+		const id = data.get('id');
+		const db = getDb();
+		db.prepare('DELETE FROM spelling_words WHERE id = ?').run(id);
+		return { success: true };
+	},
+
+	clearSpellingStats: async ({ request }) => {
+		const data = await request.formData();
+		const grade = data.get('grade');
+		const db = getDb();
+		if (grade) {
+			db.prepare('DELETE FROM spelling_attempts WHERE grade = ?').run(grade);
+		} else {
+			db.prepare('DELETE FROM spelling_attempts').run();
+		}
+		return { success: true };
+	},
+
+	clearMathStats: async ({ request }) => {
+		const data = await request.formData();
+		const userId = data.get('userId');
+		const db = getDb();
+		if (userId) {
+			db.prepare('DELETE FROM math_attempts WHERE user_id = ?').run(userId);
+		} else {
+			db.prepare('DELETE FROM math_attempts').run();
+		}
+		return { success: true };
 	},
 
 	createStoryFromImage: async ({ request }) => {
@@ -245,12 +358,16 @@ export const actions: Actions = {
 		try {
 			const apiKey = await getGeminiApiKey();
 			const genAI = new GoogleGenerativeAI(apiKey);
-			const model = genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
+			const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
 
+			// const storage = new Storage();
 			const storage = new Storage();
 			const url = new URL(imageUrl);
-			const bucketName = url.hostname.split('.')[0];
-			const fileName = url.pathname.substring(1);
+			console.log('URL:', url);
+			const parts = url.pathname.split('/');
+
+			const bucketName = parts[1];
+			const fileName = parts.slice(2).join('/');
 
 			const bucket = storage.bucket(bucketName);
 			const file = bucket.file(decodeURIComponent(fileName));
@@ -262,8 +379,8 @@ export const actions: Actions = {
 					mimeType: 'image/png'
 				}
 			};
-
-			const result = await model.generateContent([prompt, imagePart]);
+			const completePrompt = `Create a short, exciting, and creative story for a young reader based on the following idea: "${prompt}". The story should be about 5 minutes to read and include a positive life lesson. At the very beginning, on a new line, write a short, simple sentence describing the main scene for an illustration.`;
+			const result = await model.generateContent([completePrompt, imagePart]);
 			const storyContent = result.response.text();
 
 			const db = getDb();

@@ -2,11 +2,13 @@
 	import type { PageData } from './$types';
 	import { onMount } from 'svelte';
 	import { marked } from 'marked';
+	import { fade } from 'svelte/transition';
 	import ReadingGuideLine from '$lib/components/ReadingGuideLine.svelte';
 
 	export let data: PageData;
 
 	const storyHtml = marked(data.story.content);
+	let showBanner = true;
 
 	let selectedWord: string | null = null;
 	let wordData: { phonetic: string; definition: string } | null = null;
@@ -26,6 +28,7 @@
 
 	onMount(() => {
 		synth = window.speechSynthesis;
+		setTimeout(() => (showBanner = false), 3000);
 		if (storyContentElement) {
 			const style = window.getComputedStyle(storyContentElement);
 			lineHeight = parseFloat(style.lineHeight);
@@ -252,13 +255,22 @@
 	}
 </script>
 
+{#if showBanner}
+	<div
+		transition:fade={{ duration: 400 }}
+		class="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-primary text-black font-bold text-lg px-8 py-4 rounded-2xl shadow-xl"
+	>
+		Your story is ready!
+	</div>
+{/if}
+
 <div class="bg-gray-50 min-h-screen">
 	<div class="container mx-auto px-4 py-8">
 		<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
 			<img
 				src={data.story.image_url}
 				alt="Story illustration"
-				class="w-full h-150 object-fit"
+				class="w-full h-72 md:h-96 object-cover"
 			/>
 			<div class="p-8 md:p-12">
 				<h1 class="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Your New Story</h1>
@@ -285,7 +297,7 @@
 				<div class="mt-8 pt-6 border-t">
 					<a
 						href="/"
-						class="inline-block bg-indigo-600 text-white font-bold py-2 px-4 rounded hover:bg-indigo-700 transition-colors"
+						class="inline-block bg-primary text-black font-bold py-3 px-6 rounded-xl hover:opacity-90 transition-opacity shadow-md"
 						>Create Another Story</a
 					>
 				</div>
@@ -300,7 +312,7 @@
 		style="top: {popupPosition.top}px; left: {popupPosition.left}px;"
 	>
 		<button
-			class="absolute top-1 right-2 text-gray-500 hover:text-gray-800 text-2xl"
+			class="absolute top-1 right-1 w-9 h-9 flex items-center justify-center text-gray-500 hover:text-gray-800 text-2xl rounded-full hover:bg-gray-100"
 			on:click={closePopup}>&times;</button
 		>
 		<h3 class="font-bold text-lg mb-2">{selectedWord}</h3>
@@ -310,7 +322,7 @@
 			<p class="text-sm text-gray-600 mb-2"><em>{wordData.phonetic}</em></p>
 			<p class="text-sm mb-3">{wordData.definition}</p>
 			<button
-				class="text-sm bg-blue-500 text-white py-1 px-3 rounded hover:bg-blue-600"
+				class="text-sm bg-primary text-black py-2 px-4 rounded-lg font-semibold hover:opacity-90 transition-opacity"
 				on:click={() => speak(wordData?.definition || '')}>Explain Word</button
 			>
 		{:else}
