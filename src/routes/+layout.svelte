@@ -5,6 +5,7 @@
 	import type { PageData } from './$types';
 	import { theme } from '$lib/stores';
 	import { browser } from '$app/environment';
+	import { base } from '$app/paths';
 
 	let { children, data }: { children: Snippet; data: PageData } = $props();
 
@@ -27,16 +28,18 @@
 
 <div class="min-h-screen bg-gray-50">
 	<header class="bg-white shadow-sm">
-		<nav class="container mx-auto px-4 py-3 flex justify-between items-center">
-			<a href="/" class="text-xl font-bold text-primary">Imaginations By Lai</a>
+		<nav class="container mx-auto flex items-center justify-between px-4 py-3">
+			<a href="{base}/" class="text-primary text-xl font-bold">Imaginations By Lai</a>
 			<div class="flex items-center gap-4">
-				<a href="/math" class="text-gray-600 hover:text-primary transition-colors font-semibold">Math</a>
-				<a href="/spelling" class="text-gray-600 hover:text-primary transition-colors font-semibold">Spelling</a>
-				{#if data.user?.isAdmin}
-					<a href="/settings" class="text-gray-600 hover:text-primary transition-colors">Settings</a>
-				{:else}
-					<a href="/login" class="text-gray-600 hover:text-primary transition-colors">Admin Login</a>
-				{/if}
+				<a href="{base}/math" class="hover:text-primary font-semibold text-gray-600 transition-colors"
+					>Math</a
+				>
+				<a href="{base}/spelling" class="hover:text-primary font-semibold text-gray-600 transition-colors"
+					>Spelling</a
+				>
+				<a href="{base}/login" class="hover:text-primary text-gray-600 transition-colors">
+					Settings 🔒
+				</a>
 			</div>
 		</nav>
 	</header>

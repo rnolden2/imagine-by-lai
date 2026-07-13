@@ -1,377 +1,543 @@
-import { getDb } from '$lib/server/db';
-import { fail, redirect } from '@sveltejs/kit';
-import type { PageServerLoad, Actions } from './$types';
-import type { User, Lesson, Story, MathSettings, MathSessionSummary, SpellingWord, SpellingSessionSummary } from '$lib/types';
-import { GCS_BUCKET_NAME, getGeminiApiKey } from '$lib/server/secrets';
-import { Storage } from '@google-cloud/storage';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { backupDatabase } from '$lib/server/backup';
+import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
+import { fail, isRedirect, redirect, error as kitError } from '@sveltejs/kit';
+import type { Actions, PageServerLoad } from './$types';
+import type {
+	Lesson,
+	MathSessionSummary,
+	MathSettings,
+	SpellingSessionSummary,
+	SpellingWord,
+	Story,
+	User
+} from '$lib/types';
+import { GCS_BUCKET_NAME } from '$lib/server/secrets';
+import { getGeminiImageModel } from '$lib/server/ai';
+import {
+	downloadImageFromGcsUrl,
+	deleteStoryImageObject,
+	listUnassignedStoryImages,
+	objectNameFromGcsUrl,
+	uploadStoryImage
+} from '$lib/server/image-storage';
 
-export const load: PageServerLoad = async () => {
-	const db = getDb();
-	const users = db.prepare('SELECT * FROM users').all() as User[];
-	const lessons = db.prepare('SELECT * FROM lessons').all() as Lesson[];
-	const stories = db.prepare('SELECT * FROM stories ORDER BY created_at DESC').all() as Story[];
-	const storiesWithoutImages = db
-		.prepare('SELECT * FROM stories WHERE image_url IS NULL ORDER BY created_at DESC')
-		.all() as Story[];
+function mapUser(row: any): User {
+	return { ...row, user_id: row.id } as User;
+}
 
-	let backups: { name: string; timeCreated: string }[] = [];
-	let availableImages: { url: string; name: string; timeCreated: string }[] = [];
-	let gcsError: string | null = null;
+function mapStory(row: any): Story {
+	return { ...row, user_id: row.child_id } as Story;
+}
 
-	try {
-		if (!GCS_BUCKET_NAME) {
-			gcsError = 'GCS_BUCKET_NAME environment variable is not configured';
-			console.warn('GCS_BUCKET_NAME not set - image assignment features will be limited');
-		} else {
-			// const storage = new Storage();
-			const storage = new Storage();
-			const bucket = storage.bucket(GCS_BUCKET_NAME);
+function mapMathSettings(row: any): MathSettings {
+	return { ...row, user_id: row.child_id, config: row.config ?? {} } as MathSettings;
+}
 
-			// Fetch backups
-			try {
-				const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
-				backups = backupFiles
-					.filter((file) => file.name.endsWith('.db'))
-					.map((file) => ({
-						name: file.name,
-						timeCreated: file.metadata.timeCreated as string
-					}))
-					.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
-			} catch (backupError) {
-				console.error('Failed to fetch backups:', backupError);
-				if (!gcsError) {
-					gcsError = 'Failed to fetch backups from Google Cloud Storage';
-				}
-			}
+function groupMathStats(rows: any[]): MathSessionSummary[] {
+	const grouped = new Map<string, MathSessionSummary>();
 
-			// Fetch available images
-			try {
-				const [imageFiles] = await bucket.getFiles({ prefix: 'imagine-by-lai/story-' });
-				const allImages = await Promise.all(
-					imageFiles
-						.filter((file) => file.name.endsWith('.png'))
-						.sort((a, b) => {
-							const timeA = new Date(a.metadata.timeCreated as string).getTime();
-							const timeB = new Date(b.metadata.timeCreated as string).getTime();
-							return timeB - timeA; // Most recent first
-						})
-						.map(async (file) => {
-							const [url] = await file.getSignedUrl({
-								action: 'read',
-								expires: '03-09-2491'
-							});
-							return {
-								url,
-								name: file.name.replace('imagine-by-lai/', ''),
-								timeCreated: file.metadata.timeCreated as string
-							};
-						})
-				);
-
-				const storyImageUrls = new Set(stories.map((s) => s.image_url).filter(Boolean));
-				availableImages = allImages.filter((img) => !storyImageUrls.has(img.url));
-			} catch (imageError) {
-				console.error('Failed to fetch images:', imageError);
-				if (!gcsError) {
-					gcsError = 'Failed to fetch images from Google Cloud Storage';
-				}
-			}
+	for (const row of rows) {
+		const existing = grouped.get(row.session_id);
+		if (!existing) {
+			grouped.set(row.session_id, {
+				child_name: row.child_profiles?.name ?? null,
+				user_name: row.child_profiles?.name ?? null,
+				session_id: row.session_id,
+				started_at: row.created_at,
+				total: 0,
+				correct: 0
+			});
 		}
-	} catch (error) {
-		console.error('Failed to initialize GCS:', error);
-		gcsError = `Google Cloud Storage error: ${error instanceof Error ? error.message : 'Unknown error'}`;
+
+		const session = grouped.get(row.session_id)!;
+		session.total += 1;
+		if (row.is_correct) session.correct += 1;
+		if (new Date(row.created_at).getTime() < new Date(session.started_at).getTime()) {
+			session.started_at = row.created_at;
+		}
 	}
 
-	const mathSettings = db.prepare('SELECT * FROM math_settings').all() as MathSettings[];
-	const mathStats = db
-		.prepare(
-			`SELECT u.name as user_name, ma.session_id,
-              MIN(ma.created_at) as started_at,
-              COUNT(*) as total,
-              SUM(ma.is_correct) as correct
-       FROM math_attempts ma
-       LEFT JOIN users u ON ma.user_id = u.id
-       GROUP BY ma.session_id
-       ORDER BY started_at DESC
-       LIMIT 100`
-		)
-		.all() as MathSessionSummary[];
+	return [...grouped.values()]
+		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+		.slice(0, 100);
+}
 
-	const spellingWords = db.prepare('SELECT * FROM spelling_words ORDER BY grade, word').all() as SpellingWord[];
-	const spellingStats = db
-		.prepare(
-			`SELECT u.name as user_name, sa.session_id, sa.grade,
-              MIN(sa.created_at) as started_at,
-              COUNT(*) as total,
-              SUM(sa.is_correct) as correct
-       FROM spelling_attempts sa
-       LEFT JOIN users u ON sa.user_id = u.id
-       GROUP BY sa.session_id
-       ORDER BY started_at DESC
-       LIMIT 100`
-		)
-		.all() as SpellingSessionSummary[];
+function groupSpellingStats(rows: any[]): SpellingSessionSummary[] {
+	const grouped = new Map<string, SpellingSessionSummary>();
+
+	for (const row of rows) {
+		const key = `${row.session_id}:${row.grade}`;
+		const existing = grouped.get(key);
+		if (!existing) {
+			grouped.set(key, {
+				child_name: row.child_profiles?.name ?? null,
+				user_name: row.child_profiles?.name ?? null,
+				session_id: row.session_id,
+				started_at: row.created_at,
+				total: 0,
+				correct: 0,
+				grade: row.grade
+			});
+		}
+
+		const session = grouped.get(key)!;
+		session.total += 1;
+		if (row.is_correct) session.correct += 1;
+		if (new Date(row.created_at).getTime() < new Date(session.started_at).getTime()) {
+			session.started_at = row.created_at;
+		}
+	}
+
+	return [...grouped.values()]
+		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
+		.slice(0, 100);
+}
+
+async function generateAndUploadStoryImage(story: Story): Promise<{
+	imageUrl: string;
+	imageObjectName: string;
+}> {
+	const model = await getGeminiImageModel();
+	const storyExcerpt = story.content.replace(/\s+/g, ' ').trim().slice(0, 1200);
+	const prompt = [
+		'Create a warm, colorful children storybook illustration.',
+		`Story idea: ${story.prompt}`,
+		`Grade level: ${story.grade_level}`,
+		storyExcerpt ? `Story excerpt: ${storyExcerpt}` : '',
+		'Show one clear main scene. Avoid text, captions, logos, or watermarks.'
+	]
+		.filter(Boolean)
+		.join('\n');
+
+	const imageResponse = await model.generateContent(prompt);
+	let imageBuffer: Buffer | null = null;
+
+	for (const part of imageResponse.response.candidates?.[0]?.content.parts ?? []) {
+		if (part.inlineData?.data) {
+			imageBuffer = Buffer.from(part.inlineData.data, 'base64');
+			break;
+		}
+	}
+
+	if (!imageBuffer) {
+		throw new Error('Image generation returned no image data.');
+	}
+
+	const storedImage = await uploadStoryImage(imageBuffer);
+	return {
+		imageUrl: storedImage.url,
+		imageObjectName: storedImage.objectName
+	};
+}
+
+export const load: PageServerLoad = async () => {
+	let usersResult;
+	let lessonsResult;
+	let storiesResult;
+	let storiesWithoutImagesResult;
+	let mathSettingsResult;
+	let mathAttemptsResult;
+	let spellingWordsResult;
+	let spellingAttemptsResult;
+
+	try {
+		const supabase = await getSupabase();
+		[
+			usersResult,
+			lessonsResult,
+			storiesResult,
+			storiesWithoutImagesResult,
+			mathSettingsResult,
+			mathAttemptsResult,
+			spellingWordsResult,
+			spellingAttemptsResult
+		] = await Promise.all([
+			supabase.from('child_profiles').select('*').order('name', { ascending: true }),
+			supabase.from('lessons').select('*').order('lesson', { ascending: true }),
+			supabase
+				.from('stories')
+				.select('*')
+				.not('image_url', 'is', null)
+				.neq('image_url', '')
+				.order('created_at', { ascending: false }),
+			supabase
+				.from('stories')
+				.select('*')
+				.or('image_url.is.null,image_url.eq.')
+				.order('created_at', { ascending: false }),
+			supabase.from('math_settings').select('*').order('child_id', { ascending: true }),
+			supabase
+				.from('math_attempts')
+				.select('session_id, created_at, is_correct, child_profiles(name)')
+				.order('created_at', { ascending: false })
+				.limit(1000),
+			supabase
+				.from('spelling_words')
+				.select('*')
+				.order('grade', { ascending: true })
+				.order('word', { ascending: true }),
+			supabase
+				.from('spelling_attempts')
+				.select('session_id, created_at, is_correct, grade, child_profiles(name)')
+				.order('created_at', { ascending: false })
+				.limit(1000)
+		]);
+
+		const namedResults = [
+			['child profiles', usersResult],
+			['lessons', lessonsResult],
+			['stories', storiesResult],
+			['stories without images', storiesWithoutImagesResult],
+			['math settings', mathSettingsResult],
+			['math attempts', mathAttemptsResult],
+			['spelling words', spellingWordsResult],
+			['spelling attempts', spellingAttemptsResult]
+		] as const;
+
+		for (const [name, result] of namedResults) {
+			if (result.error) throwSupabaseError(`loading admin ${name}`, result.error);
+		}
+	} catch (error) {
+		throw kitError(503, getSupabaseErrorMessage(error));
+	}
+
+	const stories = (storiesResult.data ?? []).map(mapStory);
+	let availableImages: { url: string; objectName: string; name: string; timeCreated: string }[] = [];
+	let gcsError: string | null = null;
+
+	if (GCS_BUCKET_NAME) {
+		try {
+			const assignedObjectNames = new Set(
+				stories
+					.map((story) => story.image_object_name ?? objectNameFromGcsUrl(story.image_url ?? ''))
+					.filter(Boolean) as string[]
+			);
+			const assignedUrls = new Set(stories.map((story) => story.image_url).filter(Boolean) as string[]);
+			availableImages = await listUnassignedStoryImages(assignedObjectNames, assignedUrls);
+		} catch (error) {
+			console.error('Failed to fetch story images:', error);
+			gcsError = 'Failed to fetch images from Google Cloud Storage';
+		}
+	} else {
+		gcsError = 'GCS_BUCKET_NAME environment variable is not configured';
+	}
 
 	return {
-		users,
-		lessons,
+		users: (usersResult.data ?? []).map(mapUser),
+		lessons: (lessonsResult.data ?? []) as unknown as Lesson[],
 		stories,
-		storiesWithoutImages,
+		storiesWithoutImages: (storiesWithoutImagesResult.data ?? []).map(mapStory),
 		availableImages,
-		backups,
+		backups: [],
 		gcsError,
-		mathSettings,
-		mathStats,
-		spellingWords,
-		spellingStats
+		mathSettings: (mathSettingsResult.data ?? []).map(mapMathSettings),
+		mathStats: groupMathStats(mathAttemptsResult.data ?? []),
+		spellingWords: (spellingWordsResult.data ?? []) as unknown as SpellingWord[],
+		spellingStats: groupSpellingStats(spellingAttemptsResult.data ?? [])
 	};
 };
 
 export const actions: Actions = {
 	addUser: async ({ request }) => {
 		const data = await request.formData();
-		const name = data.get('name');
-		const grade = data.get('grade');
-		const gender = data.get('gender');
+		const name = String(data.get('name') ?? '').trim();
+		const grade = String(data.get('grade') ?? '').trim();
+		const gender = String(data.get('gender') ?? '').trim();
+		const characterDescription = String(data.get('characterDescription') ?? '').trim() || null;
+		const storyThemes = data.getAll('storyThemes').map(String);
+		const storyLengthMinutes = Number(data.get('storyLengthMinutes') ?? 5);
 
-		if (!name || !grade || !gender) {
-			return fail(400, { message: 'All user fields are required' });
+		if (!name || !grade || (gender !== 'boy' && gender !== 'girl')) {
+			return fail(400, { message: 'Name, grade, and gender are required.' });
 		}
-		const db = getDb();
-		db.prepare('INSERT INTO users (name, grade, gender) VALUES (?, ?, ?)').run(name, grade, gender);
+
+		const supabase = await getSupabase();
+		const { error } = await supabase.from('child_profiles').insert({
+			name,
+			grade,
+			gender,
+			character_description: characterDescription,
+			story_themes: storyThemes.length > 0 ? storyThemes : ['space'],
+			story_length_minutes: Number.isFinite(storyLengthMinutes) ? storyLengthMinutes : 5
+		});
+		if (error) throw error;
+
+		return { success: true };
+	},
+
+	saveChildSettings: async ({ request }) => {
+		const data = await request.formData();
+		const id = Number(data.get('id'));
+		const name = String(data.get('name') ?? '').trim();
+		const grade = String(data.get('grade') ?? '').trim();
+		const gender = String(data.get('gender') ?? '').trim();
+		const characterDescription = String(data.get('characterDescription') ?? '').trim() || null;
+		const storyThemes = data.getAll('storyThemes').map(String);
+		const storyLengthMinutes = Number(data.get('storyLengthMinutes') ?? 5);
+
+		if (!id || !name || !grade || (gender !== 'boy' && gender !== 'girl')) {
+			return fail(400, { message: 'Valid child profile fields are required.' });
+		}
+
+		const supabase = await getSupabase();
+		const { error } = await supabase
+			.from('child_profiles')
+			.update({
+				name,
+				grade,
+				gender,
+				character_description: characterDescription,
+				story_themes: storyThemes.length > 0 ? storyThemes : ['space'],
+				story_length_minutes: Number.isFinite(storyLengthMinutes) ? storyLengthMinutes : 5
+			})
+			.eq('id', id);
+		if (error) throw error;
+
 		return { success: true };
 	},
 
 	deleteUser: async ({ request }) => {
 		const data = await request.formData();
-		const id = data.get('id');
-		const db = getDb();
-		db.prepare('DELETE FROM users WHERE id = ?').run(id);
+		const supabase = await getSupabase();
+		const { error } = await supabase.from('child_profiles').delete().eq('id', Number(data.get('id')));
+		if (error) throw error;
 		return { success: true };
 	},
 
 	addLesson: async ({ request }) => {
 		const data = await request.formData();
-		const lesson = data.get('lesson');
+		const lesson = String(data.get('lesson') ?? '').trim();
 
 		if (!lesson) {
-			return fail(400, { message: 'Lesson text is required' });
+			return fail(400, { message: 'Lesson text is required.' });
 		}
-		const db = getDb();
-		db.prepare('INSERT INTO lessons (lesson) VALUES (?)').run(lesson);
+
+		const supabase = await getSupabase();
+		const { error } = await supabase.from('lessons').upsert({ lesson }, { onConflict: 'lesson' });
+		if (error) throw error;
 		return { success: true };
 	},
 
 	deleteLesson: async ({ request }) => {
 		const data = await request.formData();
-		const id = data.get('id');
-		const db = getDb();
-		db.prepare('DELETE FROM lessons WHERE id = ?').run(id);
+		const supabase = await getSupabase();
+		const { error } = await supabase.from('lessons').delete().eq('id', Number(data.get('id')));
+		if (error) throw error;
 		return { success: true };
 	},
 
 	deleteStory: async ({ request }) => {
 		const data = await request.formData();
-		const id = data.get('id');
-		const db = getDb();
-		db.prepare('DELETE FROM stories WHERE id = ?').run(id);
+		const storyId = Number(data.get('id'));
+
+		if (!storyId) {
+			return fail(400, { message: 'Story ID is required.' });
+		}
+
+		const supabase = await getSupabase();
+		const { data: storyRow, error: lookupError } = await supabase
+			.from('stories')
+			.select('id, image_url, image_object_name')
+			.eq('id', storyId)
+			.single();
+		if (lookupError) throw lookupError;
+		if (!storyRow) return fail(404, { message: `Story #${storyId} was not found.` });
+
+		const { error } = await supabase.from('stories').delete().eq('id', storyId);
+		if (error) throw error;
+
+		const imageObjectName =
+			storyRow.image_object_name ?? objectNameFromGcsUrl(storyRow.image_url ?? '');
+		if (imageObjectName) {
+			try {
+				await deleteStoryImageObject(imageObjectName);
+			} catch (storageError) {
+				console.error(`Deleted story #${storyId} but failed to delete image ${imageObjectName}:`, storageError);
+			}
+		}
+
 		return { success: true };
 	},
 
 	assignImageToStory: async ({ request }) => {
 		const data = await request.formData();
-		const storyId = data.get('storyId');
-		const imageUrl = data.get('imageUrl');
+		const storyId = Number(data.get('storyId'));
+		const imageUrl = String(data.get('imageUrl') ?? '');
+		const imageObjectName =
+			String(data.get('imageObjectName') ?? '').trim() || objectNameFromGcsUrl(imageUrl);
 
 		if (!storyId || !imageUrl) {
 			return fail(400, { message: 'Story ID and image URL are required.' });
 		}
 
-		if (typeof storyId !== 'string' || typeof imageUrl !== 'string') {
-			return fail(400, { message: 'Invalid data format.' });
+		const supabase = await getSupabase();
+		const { error } = await supabase
+			.from('stories')
+			.update({ image_url: imageUrl, image_object_name: imageObjectName })
+			.eq('id', storyId);
+		if (error) throw error;
+
+		return { success: true, message: `Image successfully assigned to story #${storyId}`, storyId };
+	},
+
+	regenerateStoryImage: async ({ request }) => {
+		const data = await request.formData();
+		const storyId = Number(data.get('storyId'));
+
+		if (!storyId) {
+			return fail(400, { message: 'Story ID is required.' });
 		}
 
 		try {
-			const db = getDb();
+			const supabase = await getSupabase();
+			const { data: storyRow, error: storyError } = await supabase
+				.from('stories')
+				.select('*')
+				.eq('id', storyId)
+				.single();
+			if (storyError) throwSupabaseError('loading story for image regeneration', storyError);
+			if (!storyRow) return fail(404, { message: `Story #${storyId} was not found.` });
 
-			// Verify the story exists
-			const story = db.prepare('SELECT id FROM stories WHERE id = ?').get(storyId);
-			if (!story) {
-				return fail(404, { message: 'Story not found.' });
-			}
-
-			// Update the story with the image URL
-			db.prepare('UPDATE stories SET image_url = ? WHERE id = ?').run(imageUrl, storyId);
+			const storedImage = await generateAndUploadStoryImage(mapStory(storyRow));
+			const { error: updateError } = await supabase
+				.from('stories')
+				.update({
+					image_url: storedImage.imageUrl,
+					image_object_name: storedImage.imageObjectName
+				})
+				.eq('id', storyId);
+			if (updateError) throwSupabaseError('saving regenerated story image', updateError);
 
 			return {
 				success: true,
-				message: `Image successfully assigned to story #${storyId}`,
-				storyId
+				message: `Regenerated image for story #${storyId}.`,
+				storyId,
+				imageUrl: storedImage.imageUrl
 			};
 		} catch (error) {
-			console.error('Failed to assign image to story:', error);
-			return fail(500, { message: 'Failed to assign image to story.' });
+			console.error('Failed to regenerate story image:', error);
+			return fail(error instanceof Error && error.name === 'SupabaseConnectionError' ? 503 : 500, {
+				message:
+					error instanceof Error && error.name === 'SupabaseConnectionError'
+						? getSupabaseErrorMessage(error)
+						: 'Failed to regenerate story image.'
+			});
 		}
 	},
 
 	backupDatabase: async () => {
-		try {
-			// Use the shared backup utility with closeDb=true for manual backups
-			const result = await backupDatabase(true);
-
-			if (result.success) {
-				return { success: true, message: result.message };
-			} else {
-				return fail(500, { message: result.message });
-			}
-		} catch (error) {
-			console.error('Database backup failed:', error);
-			return fail(500, { message: 'Database backup failed.' });
-		}
+		return fail(400, {
+			message: 'Manual SQLite backups are disabled because the app now uses Supabase.'
+		});
 	},
 
-	restoreDatabase: async ({ request }) => {
-		const data = await request.formData();
-		const fileName = data.get('fileName');
-
-		if (!fileName || typeof fileName !== 'string') {
-			return fail(400, { message: 'File name is required.' });
-		}
-
-		try {
-			const { GCS_BUCKET_NAME } = await import('$lib/server/secrets');
-			const { Storage } = await import('@google-cloud/storage');
-			const fs = await import('fs/promises');
-
-			if (!GCS_BUCKET_NAME) {
-				return fail(500, { message: 'GCS_BUCKET_NAME is not configured.' });
-			}
-
-			// const storage = new Storage();
-			const storage = new Storage();
-			const bucket = storage.bucket(GCS_BUCKET_NAME);
-			const file = bucket.file(fileName);
-
-			const tempPath = 'imagine.db.tmp';
-			await file.download({ destination: tempPath });
-
-			const db = getDb();
-			db.close();
-
-			await fs.rename(tempPath, 'imagine.db');
-
-			return {
-				success: true,
-				message: 'Database restored successfully. Please restart the server.'
-			};
-		} catch (error) {
-			console.error('Database restore failed:', error);
-			return fail(500, { message: 'Database restore failed.' });
-		}
+	restoreDatabase: async () => {
+		return fail(400, {
+			message: 'SQLite restore is disabled because the app now uses Supabase.'
+		});
 	},
 
 	saveMathSettings: async ({ request }) => {
 		const data = await request.formData();
-		const userId = data.get('userId');
-		const maxNumber = data.get('maxNumber');
-		const rawOps = data.getAll('operations');
+		const childId = Number(data.get('userId') ?? data.get('childId'));
+		const maxNumber = Number(data.get('maxNumber') ?? 10);
+		const operations = data.getAll('operations').map(String);
 
-		if (!userId || !maxNumber || rawOps.length === 0) {
-			return fail(400, { message: 'Math settings: userId, maxNumber, and at least one operation are required.' });
+		if (!childId || operations.length === 0) {
+			return fail(400, { message: 'Choose a child and at least one math operation.' });
 		}
 
-		const operations = rawOps.join(',');
-		const db = getDb();
-		db.prepare(
-			`INSERT INTO math_settings (user_id, operations, max_number, updated_at)
-       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(user_id) DO UPDATE SET
-         operations = excluded.operations,
-         max_number = excluded.max_number,
-         updated_at = CURRENT_TIMESTAMP`
-		).run(userId, operations, parseInt(maxNumber as string));
+		const config = {
+			maxNumber: Number.isFinite(maxNumber) ? maxNumber : 10,
+			fractions: { denominators: [2, 3, 4, 6, 8] },
+			time: { minuteStep: 5 },
+			recognition: { maxNumber: Math.min(Number.isFinite(maxNumber) ? maxNumber : 10, 20) }
+		};
+
+		const supabase = await getSupabase();
+		const { error } = await supabase.from('math_settings').upsert(
+			{
+				child_id: childId,
+				operations,
+				config,
+				updated_at: new Date().toISOString()
+			},
+			{ onConflict: 'child_id' }
+		);
+		if (error) throw error;
 
 		return { success: true };
 	},
 
 	addSpellingWord: async ({ request }) => {
 		const data = await request.formData();
-		const word = (data.get('word') as string)?.trim().toLowerCase();
-		const grade = data.get('grade') as string;
+		const word = String(data.get('word') ?? '')
+			.trim()
+			.toLowerCase();
+		const grade = String(data.get('grade') ?? '').trim();
 
 		if (!word || !grade) {
 			return fail(400, { message: 'Word and grade are required.' });
 		}
 
-		const db = getDb();
-		const exists = db.prepare('SELECT id FROM spelling_words WHERE word = ? AND grade = ?').get(word, grade);
-		if (exists) {
-			return fail(400, { message: `"${word}" already exists for grade ${grade}.` });
+		const supabase = await getSupabase();
+		const { data: existing, error: lookupError } = await supabase
+			.from('spelling_words')
+			.select('id')
+			.eq('grade', grade)
+			.ilike('word', word)
+			.maybeSingle();
+		if (lookupError) throw lookupError;
+
+		if (!existing) {
+			const { error } = await supabase.from('spelling_words').insert({ word, grade });
+			if (error) throw error;
 		}
-		db.prepare('INSERT INTO spelling_words (word, grade) VALUES (?, ?)').run(word, grade);
+
 		return { success: true };
 	},
 
 	deleteSpellingWord: async ({ request }) => {
 		const data = await request.formData();
-		const id = data.get('id');
-		const db = getDb();
-		db.prepare('DELETE FROM spelling_words WHERE id = ?').run(id);
+		const supabase = await getSupabase();
+		const { error } = await supabase.from('spelling_words').delete().eq('id', Number(data.get('id')));
+		if (error) throw error;
 		return { success: true };
 	},
 
 	clearSpellingStats: async ({ request }) => {
 		const data = await request.formData();
 		const grade = data.get('grade');
-		const db = getDb();
-		if (grade) {
-			db.prepare('DELETE FROM spelling_attempts WHERE grade = ?').run(grade);
-		} else {
-			db.prepare('DELETE FROM spelling_attempts').run();
-		}
+		const supabase = await getSupabase();
+		const query = supabase.from('spelling_attempts').delete();
+		const { error } = grade ? await query.eq('grade', String(grade)) : await query.neq('id', 0);
+		if (error) throw error;
 		return { success: true };
 	},
 
 	clearMathStats: async ({ request }) => {
 		const data = await request.formData();
-		const userId = data.get('userId');
-		const db = getDb();
-		if (userId) {
-			db.prepare('DELETE FROM math_attempts WHERE user_id = ?').run(userId);
-		} else {
-			db.prepare('DELETE FROM math_attempts').run();
-		}
+		const childId = data.get('userId') ?? data.get('childId');
+		const supabase = await getSupabase();
+		const query = supabase.from('math_attempts').delete();
+		const { error } = childId ? await query.eq('child_id', Number(childId)) : await query.neq('id', 0);
+		if (error) throw error;
 		return { success: true };
 	},
 
 	createStoryFromImage: async ({ request }) => {
 		const data = await request.formData();
-		const imageUrl = data.get('imageUrl');
-		const prompt = data.get('prompt');
+		const imageUrl = String(data.get('imageUrl') ?? '');
+		const imageObjectName =
+			String(data.get('imageObjectName') ?? '').trim() || objectNameFromGcsUrl(imageUrl);
+		const prompt = String(data.get('prompt') ?? '').trim();
 
-		if (!imageUrl || !prompt || typeof imageUrl !== 'string' || typeof prompt !== 'string') {
+		if (!imageUrl || !prompt) {
 			return fail(400, { message: 'Image URL and prompt are required.' });
 		}
 
 		try {
-			const apiKey = await getGeminiApiKey();
-			const genAI = new GoogleGenerativeAI(apiKey);
-			const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
-
-			// const storage = new Storage();
-			const storage = new Storage();
-			const url = new URL(imageUrl);
-			console.log('URL:', url);
-			const parts = url.pathname.split('/');
-
-			const bucketName = parts[1];
-			const fileName = parts.slice(2).join('/');
-
-			const bucket = storage.bucket(bucketName);
-			const file = bucket.file(decodeURIComponent(fileName));
-			const [imageBuffer] = await file.download();
+			const model = await getGeminiImageModel();
+			const { buffer: imageBuffer } = await downloadImageFromGcsUrl(imageUrl);
 
 			const imagePart = {
 				inlineData: {
@@ -382,16 +548,23 @@ export const actions: Actions = {
 			const completePrompt = `Create a short, exciting, and creative story for a young reader based on the following idea: "${prompt}". The story should be about 5 minutes to read and include a positive life lesson. At the very beginning, on a new line, write a short, simple sentence describing the main scene for an illustration.`;
 			const result = await model.generateContent([completePrompt, imagePart]);
 			const storyContent = result.response.text();
+			const supabase = await getSupabase();
+			const { data: story, error } = await supabase
+				.from('stories')
+				.insert({
+					prompt,
+					content: storyContent,
+					image_url: imageUrl,
+					image_object_name: imageObjectName,
+					grade_level: '1'
+				})
+				.select('id')
+				.single();
+			if (error) throw error;
 
-			const db = getDb();
-			const info = db
-				.prepare(
-					'INSERT INTO stories (prompt, content, image_url, grade_level) VALUES (?, ?, ?, ?)'
-				)
-				.run(prompt, storyContent, imageUrl, '1');
-
-			throw redirect(303, `/story/${info.lastInsertRowid}`);
+			throw redirect(303, `/story/${story.id}`);
 		} catch (error) {
+			if (isRedirect(error)) throw error;
 			console.error('Failed to create story from image:', error);
 			return fail(500, { message: 'Failed to create story from image.' });
 		}

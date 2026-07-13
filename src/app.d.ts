@@ -2,7 +2,13 @@
 // for information about these interfaces
 declare global {
 	namespace App {
-		// interface Error {}
+		interface Error {
+			message: string;
+			code?: string;
+			title?: string;
+			retryable?: boolean;
+			help?: string[];
+		}
 		interface Locals {
 			user?: {
 				isAdmin: boolean;

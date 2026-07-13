@@ -5,9 +5,9 @@
 	export let form: ActionData;
 </script>
 
-<div class="min-h-screen bg-gray-100 flex items-center justify-center">
-	<div class="w-full max-w-sm p-8 space-y-6 bg-white rounded-lg shadow-md">
-		<h1 class="text-2xl font-bold text-center text-gray-900">Admin Login</h1>
+<div class="flex min-h-screen items-center justify-center bg-gray-100">
+	<div class="w-full max-w-sm space-y-6 rounded-lg bg-white p-8 shadow-md">
+		<h1 class="text-center text-2xl font-bold text-gray-900">Admin Login</h1>
 		<form method="POST" use:enhance class="space-y-6">
 			<div>
 				<label for="password" class="block text-sm font-medium text-gray-700">Password</label>
@@ -15,21 +15,21 @@
 					type="password"
 					id="password"
 					name="password"
-					class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
+					class="focus:border-primary focus:ring-primary mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
 					required
 				/>
 			</div>
 			<div>
 				<button
 					type="submit"
-					class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-black bg-primary hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-opacity"
+					class="bg-primary focus:ring-primary flex w-full justify-center rounded-md border border-transparent px-4 py-3 text-sm font-medium text-black shadow-sm transition-opacity hover:opacity-90 focus:ring-2 focus:ring-offset-2 focus:outline-none"
 				>
 					Login
 				</button>
 			</div>
 		</form>
 		{#if form?.error}
-			<p class="text-red-500 text-sm text-center">{form.error}</p>
+			<p class="text-center text-sm text-red-500">{form.error}</p>
 		{/if}
 	</div>
 </div>

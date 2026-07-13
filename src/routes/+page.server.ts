@@ -1,70 +1,54 @@
 import type { Actions } from './$types';
-import { fail, redirect, isRedirect } from '@sveltejs/kit';
-import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
-import { Storage } from '@google-cloud/storage';
-import { getGeminiApiKey, GCS_BUCKET_NAME } from '$lib/server/secrets';
-import { getDb } from '$lib/server/db';
-import { backupDatabaseAsync } from '$lib/server/backup';
+import { fail, redirect, isRedirect, error as kitError } from '@sveltejs/kit';
+import { GCS_BUCKET_NAME } from '$lib/server/secrets';
+import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
+import { generateStoryText, getGeminiImageModel } from '$lib/server/ai';
 import type { PageServerLoad } from './$types';
 import type { User, Story } from '$lib/types';
+import { uploadStoryImage } from '$lib/server/image-storage';
 
 if (!GCS_BUCKET_NAME) {
 	throw new Error('Missing GCS_BUCKET_NAME environment variable.');
 }
 
-// const storage = new Storage();
-const storage = new Storage();
-const bucket = storage.bucket(GCS_BUCKET_NAME);
-
 export const load: PageServerLoad = async () => {
-	const db = getDb();
-	const users = db.prepare('SELECT * FROM users').all() as User[];
-	const stories = db.prepare('SELECT * FROM stories ORDER BY created_at DESC').all() as Story[];
+	let usersResult: any[] | null = null;
+	let storiesResult: any[] | null = null;
 
-	let latestBackup: { name: string; timeCreated: string } | null = null;
+	try {
+		const supabase = await getSupabase();
+		const [usersResponse, storiesResponse] = await Promise.all([
+			supabase.from('child_profiles').select('*').order('name', { ascending: true }),
+			supabase
+				.from('stories')
+				.select('*')
+				.not('image_url', 'is', null)
+				.neq('image_url', '')
+				.order('created_at', { ascending: false })
+		]);
 
-	// Fetch latest backup if no stories exist
-	if (stories.length === 0 && GCS_BUCKET_NAME) {
-		try {
-			const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
-			const backups = backupFiles
-				.filter((file) => file.name.endsWith('.db'))
-				.map((file) => ({
-					name: file.name,
-					timeCreated: file.metadata.timeCreated as string
-				}))
-				.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
+		if (usersResponse.error) throwSupabaseError('loading child profiles', usersResponse.error);
+		if (storiesResponse.error) throwSupabaseError('loading stories', storiesResponse.error);
 
-			if (backups.length > 0) {
-				latestBackup = backups[0];
-			}
-		} catch (error) {
-			console.error('Failed to fetch latest backup:', error);
-		}
+		usersResult = usersResponse.data;
+		storiesResult = storiesResponse.data;
+	} catch (supabaseError) {
+		throw kitError(503, getSupabaseErrorMessage(supabaseError));
 	}
 
-	return { users, stories, latestBackup };
+	const users = (usersResult ?? []).map((u: any) => ({
+		...u,
+		user_id: u.id
+	})) as User[];
+
+	const stories = (storiesResult ?? []).map((s: any) => ({
+		...s,
+		child_id: s.child_id,
+		user_id: s.child_id
+	})) as Story[];
+
+	return { users, stories, latestBackup: null };
 };
-
-// Asynchronously initialize the Gemini models
-let textModel: GenerativeModel;
-let imageModel: GenerativeModel;
-
-async function getTextModel(): Promise<GenerativeModel> {
-	if (textModel) return textModel;
-	const apiKey = await getGeminiApiKey();
-	const genAI = new GoogleGenerativeAI(apiKey);
-	textModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
-	return textModel;
-}
-
-async function getImageModel(): Promise<GenerativeModel> {
-	if (imageModel) return imageModel;
-	const apiKey = await getGeminiApiKey();
-	const genAI = new GoogleGenerativeAI(apiKey);
-	imageModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
-	return imageModel;
-}
 
 // Error types for better error handling
 class StoryGenerationError extends Error {
@@ -125,41 +109,71 @@ function getGradeMetadata(grade: string) {
 	}
 }
 
-// Generate dynamic story prompt based on user
-function generateStoryPrompt(userPrompt: string, user: User | null): string {
+function normalizeStoryThemes(data: FormData): string[] | null {
+	if (data.get('noTheme') === 'true') return [];
+
+	const themes = data
+		.getAll('storyThemes')
+		.map((theme) => String(theme).trim())
+		.filter(Boolean);
+	const customTheme = String(data.get('customStoryTheme') ?? '').trim();
+
+	if (customTheme) themes.push(customTheme);
+
+	const uniqueThemes = [...new Set(themes)];
+	return uniqueThemes.length > 0 ? uniqueThemes : null;
+}
+
+// Generate dynamic story prompt based on user and customized themes
+function generateStoryPrompt(
+	userPrompt: string,
+	user: User | null,
+	storyThemesOverride: string[] | null
+): string {
 	if (!user) {
-		// Fallback for when no user is selected
 		return `Create a short, exciting, and creative story for a young reader based on the following idea: "${userPrompt}". The story should be about 5 minutes to read and include a positive life lesson. At the very end, on a new line, write a short, simple sentence describing the main scene for an illustration.`;
 	}
 
 	const metadata = getGradeMetadata(user.grade);
+	const length = user.story_length_minutes
+		? `${user.story_length_minutes} minutes`
+		: metadata.readingTime;
 	const childDescription =
 		user.gender === 'boy'
 			? `a ${user.grade} grade boy named ${user.name}`
 			: `a ${user.grade} grade girl named ${user.name}`;
 
+	const storyThemes = storyThemesOverride ?? user.story_themes ?? [];
+	const themesStr =
+		storyThemes.length > 0
+			? `Focus the story elements around these themes: ${storyThemes.join(', ')}.`
+			: '';
+
 	return `Create an exciting and creative story for ${childDescription} based on this idea: "${userPrompt}". 
+${themesStr}
 
 Requirements:
-- Reading time: ${metadata.readingTime}
+- Reading time: ${length}
 - Use ${metadata.complexity}
-- Make it ${metadata.storyLength}
+- Make it appropriate for grade ${user.grade}
 - Include a positive life lesson appropriate for grade ${user.grade}
 - Make the story engaging and age-appropriate
 
 At the very end, on a new line, write a short, simple sentence describing the main visual scene for an illustration.`;
 }
 
-// Generate dynamic image prompt based on user
+// Generate dynamic image prompt based on user with custom character look
 function generateImagePrompt(basePrompt: string, user: User | null): string {
 	if (!user) {
 		return `An illustration for a children's storybook: ${basePrompt}`;
 	}
 
-	const characterDescription =
+	const defaultDescription =
 		user.gender === 'boy'
 			? 'a young boy with short curly hair and brown skin'
 			: 'a young girl with long curly hair and brown skin';
+
+	const characterDescription = user.character_description || defaultDescription;
 
 	return `An illustration for a children's storybook: ${basePrompt}. If the illustration includes a child character, depict them as ${characterDescription}. Use a warm, colorful, and friendly art style suitable for grade ${user.grade} readers.`;
 }
@@ -215,51 +229,18 @@ async function withTimeout<T>(
 
 export const actions: Actions = {
 	loadStoriesFromBackup: async () => {
-		try {
-			if (!GCS_BUCKET_NAME) {
-				return fail(500, { error: 'GCS_BUCKET_NAME is not configured.' });
-			}
-
-			// Get latest backup
-			const [backupFiles] = await bucket.getFiles({ prefix: 'backups/' });
-			const backups = backupFiles
-				.filter((file) => file.name.endsWith('.db'))
-				.map((file) => ({
-					name: file.name,
-					timeCreated: file.metadata.timeCreated as string
-				}))
-				.sort((a, b) => new Date(b.timeCreated).getTime() - new Date(a.timeCreated).getTime());
-
-			if (backups.length === 0) {
-				return fail(404, { error: 'No backups found in storage.' });
-			}
-
-			const latestBackup = backups[0];
-			const fs = await import('fs/promises');
-			const file = bucket.file(latestBackup.name);
-
-			const tempPath = 'imagine.db.tmp';
-			await file.download({ destination: tempPath });
-
-			const db = getDb();
-			db.close();
-
-			await fs.rename(tempPath, 'imagine.db');
-
-			return {
-				success: true,
-				message: 'Stories loaded successfully from backup! The page will refresh.'
-			};
-		} catch (error) {
-			console.error('Failed to load stories from backup:', error);
-			return fail(500, { error: 'Failed to load stories from backup. Please try again.' });
-		}
+		// Mock backup loading - Supabase databases are permanent in the cloud
+		return {
+			success: true,
+			message: 'All stories are safely stored in your cloud Supabase database!'
+		};
 	},
 
 	generateStory: async ({ request }) => {
 		const data = await request.formData();
 		const prompt = data.get('prompt');
 		const userIdStr = data.get('userId');
+		const storyThemesOverride = normalizeStoryThemes(data);
 
 		// Validate inputs
 		if (!prompt || typeof prompt !== 'string') {
@@ -281,39 +262,46 @@ export const actions: Actions = {
 			}
 
 			try {
-				const db = getDb();
-				const stmt = db.prepare('SELECT * FROM users WHERE id = ?');
-				user = (stmt.get(userId) as User | undefined) || null;
+				const supabase = await getSupabase();
+				const { data: child, error } = await supabase
+					.from('child_profiles')
+					.select('*')
+					.eq('id', userId)
+					.single();
+				if (error) throwSupabaseError('loading selected child profile', error);
+				if (child) {
+					user = {
+						...child,
+						user_id: child.id
+					} as unknown as User;
+				}
 
 				if (!user) {
 					return fail(400, { error: 'Selected user not found. Please select a valid user.' });
 				}
 			} catch (dbError) {
 				console.error('Database error fetching user:', dbError);
-				return fail(500, { error: 'Failed to load user information. Please try again.' });
+				return fail(503, { error: getSupabaseErrorMessage(dbError) });
 			}
 		}
 
 		let storyContent: string;
 		let imagePromptText: string;
 		let imageUrl: string | null = null;
+		let imageObjectName: string | null = null;
 
 		try {
-			// 1. Generate the story with timeout
-			const storyModel = await getTextModel();
-			const storyPrompt = generateStoryPrompt(prompt, user);
+			const storyPrompt = generateStoryPrompt(prompt, user, storyThemesOverride);
 
 			console.log(
 				`Generating story for ${user ? `${user.name} (Grade ${user.grade})` : 'anonymous user'}...`
 			);
 
-			const storyResult = await withTimeout(
-				storyModel.generateContent(storyPrompt),
+			const fullText = await withTimeout(
+				generateStoryText(storyPrompt),
 				60000, // 60 second timeout
 				'Story generation timed out. Please try again.'
 			);
-
-			const fullText = await storyResult.response.text();
 
 			// Validate the response
 			try {
@@ -345,7 +333,7 @@ export const actions: Actions = {
 
 		// 2. Generate and upload the image (non-blocking - story will be saved even if this fails)
 		try {
-			const imageGenModel = await getImageModel();
+			const imageGenModel = await getGeminiImageModel();
 			const fullImagePrompt = generateImagePrompt(imagePromptText, user);
 
 			console.log('Generating story illustration...');
@@ -371,22 +359,14 @@ export const actions: Actions = {
 				throw new ImageGenerationError('No image data found in API response');
 			}
 
-			// Upload to Google Cloud Storage
-			const imageName = `imagine-by-lai/story-${Date.now()}.png`;
-			const file = bucket.file(imageName);
-
-			await withTimeout(
-				file.save(imageBuffer, {
-					metadata: { contentType: 'image/png' }
-				}),
-				30000, // 30 second timeout for upload
+			const storedImage = await withTimeout(
+				uploadStoryImage(imageBuffer),
+				30000,
 				'Image upload timed out'
 			);
 
-			[imageUrl] = await file.getSignedUrl({
-				action: 'read',
-				expires: '03-09-2491'
-			});
+			imageUrl = storedImage.url;
+			imageObjectName = storedImage.objectName;
 
 			console.log('Image generated and uploaded successfully.');
 		} catch (imgError) {
@@ -405,19 +385,25 @@ export const actions: Actions = {
 
 		// 3. Save to database
 		try {
-			const db = getDb();
-			const stmt = db.prepare(
-				'INSERT INTO stories (prompt, content, image_url, grade_level, user_id) VALUES (?, ?, ?, ?, ?)'
-			);
-			const info = stmt.run(prompt, storyContent, imageUrl, user?.grade || '1', user?.id || null);
+			const supabase = await getSupabase();
+			const { data: newStory, error } = await supabase
+				.from('stories')
+				.insert({
+					prompt,
+					content: storyContent,
+					image_url: imageUrl,
+					image_object_name: imageObjectName,
+					grade_level: user?.grade || '1',
+					child_id: user?.id || null
+				})
+				.select('id')
+				.single();
+			if (error) throwSupabaseError('saving generated story', error);
 
-			console.log(`Story saved to database with ID: ${info.lastInsertRowid}`);
-
-			// 4. Trigger automatic backup (async, non-blocking)
-			backupDatabaseAsync();
+			console.log(`Story saved to database with ID: ${newStory.id}`);
 
 			// 5. Redirect to the new story
-			throw redirect(303, `/story/${info.lastInsertRowid}`);
+			throw redirect(303, `/story/${newStory.id}`);
 		} catch (error) {
 			// Handle redirects
 			if (isRedirect(error)) {
@@ -443,9 +429,11 @@ export const actions: Actions = {
 
 			// Unknown errors
 			console.error('Unexpected error in story generation:', error);
-			return fail(500, {
+			return fail(error instanceof Error && error.name === 'SupabaseConnectionError' ? 503 : 500, {
 				error:
-					'An unexpected error occurred. Please try again or contact support if the problem persists.'
+					error instanceof Error && error.name === 'SupabaseConnectionError'
+						? getSupabaseErrorMessage(error)
+						: 'An unexpected error occurred. Please try again or contact support if the problem persists.'
 			});
 		}
 	}

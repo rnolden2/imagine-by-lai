@@ -1,54 +1,17 @@
-import { GCS_BUCKET_NAME } from './secrets';
-import { Storage } from '@google-cloud/storage';
-import { getDb } from './db';
-
 /**
- * Backs up the database to Google Cloud Storage
- * @param closeDb - Whether to close the database connection (default: false)
- * @returns Promise with success status and message
+ * Legacy SQLite backup hook.
+ *
+ * Supabase/Postgres is now the durable source of truth, so local DB snapshots are disabled.
  */
-export async function backupDatabase(closeDb = false): Promise<{
+export async function backupDatabase(): Promise<{
 	success: boolean;
 	message: string;
 	fileName?: string;
 }> {
-	try {
-		if (!GCS_BUCKET_NAME) {
-			throw new Error('GCS_BUCKET_NAME is not configured');
-		}
-
-		// const storage = new Storage();
-		const storage = new Storage();
-
-		const bucket = storage.bucket(GCS_BUCKET_NAME);
-		const fs = await import('fs/promises');
-
-		// Close the connection if requested (ensures WAL is flushed to the main DB file)
-		if (closeDb) {
-			const db = getDb();
-			db.close();
-		}
-
-		const dbBuffer = await fs.readFile('imagine.db');
-		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-		const fileName = `backups/backup-${timestamp}.db`;
-		const file = bucket.file(fileName);
-
-		await file.save(dbBuffer);
-
-		console.log(`✓ Database backed up successfully to ${fileName}`);
-		return {
-			success: true,
-			message: `Database backed up to ${fileName}`,
-			fileName
-		};
-	} catch (error) {
-		console.error('✗ Database backup failed:', error);
-		return {
-			success: false,
-			message: `Database backup failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-		};
-	}
+	return {
+		success: false,
+		message: 'SQLite backups are disabled because the app now uses Supabase PostgreSQL.'
+	};
 }
 
 /**
@@ -56,7 +19,7 @@ export async function backupDatabase(closeDb = false): Promise<{
  * Useful for background backups that shouldn't block the main flow
  */
 export function backupDatabaseAsync(): void {
-	backupDatabase(false)
+	backupDatabase()
 		.then((result) => {
 			if (result.success) {
 				console.log('Background backup completed:', result.message);

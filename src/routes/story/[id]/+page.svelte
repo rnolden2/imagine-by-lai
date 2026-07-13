@@ -4,6 +4,7 @@
 	import { marked } from 'marked';
 	import { fade } from 'svelte/transition';
 	import ReadingGuideLine from '$lib/components/ReadingGuideLine.svelte';
+	import { speak } from '$lib/tts';
 
 	export let data: PageData;
 
@@ -14,8 +15,7 @@
 	let wordData: { phonetic: string; definition: string } | null = null;
 	let isLoading = false;
 	let popupPosition = { top: 0, left: 0 };
-	let synth: SpeechSynthesis;
-	const definitionCache = new Map<string, { phonetic: string; definition: string }>();
+	const definitionCache: Record<string, { phonetic: string; definition: string }> = {};
 
 	let storyContentElement: HTMLElement;
 	let lineHeight = 0;
@@ -27,7 +27,6 @@
 	const MOVE_THRESHOLD = 10; // pixels allowed to move during long press
 
 	onMount(() => {
-		synth = window.speechSynthesis;
 		setTimeout(() => (showBanner = false), 3000);
 		if (storyContentElement) {
 			const style = window.getComputedStyle(storyContentElement);
@@ -71,16 +70,17 @@
 		if (!isLongPress) {
 			handleReadingGuideClick(event);
 		}
-		
+
 		isLongPress = false;
 	}
 
 	function handleMouseMove(event: MouseEvent) {
 		if (!longPressTimer) return;
 
-		const moved = Math.abs(event.clientX - touchStartPos.x) > MOVE_THRESHOLD ||
-		              Math.abs(event.clientY - touchStartPos.y) > MOVE_THRESHOLD;
-		
+		const moved =
+			Math.abs(event.clientX - touchStartPos.x) > MOVE_THRESHOLD ||
+			Math.abs(event.clientY - touchStartPos.y) > MOVE_THRESHOLD;
+
 		if (moved && longPressTimer) {
 			clearTimeout(longPressTimer);
 			longPressTimer = null;
@@ -112,7 +112,7 @@
 			const touch = event.changedTouches[0];
 			handleReadingGuideClick({ clientY: touch.clientY } as MouseEvent);
 		}
-		
+
 		isLongPress = false;
 	}
 
@@ -120,9 +120,10 @@
 		if (!longPressTimer || event.touches.length === 0) return;
 
 		const touch = event.touches[0];
-		const moved = Math.abs(touch.clientX - touchStartPos.x) > MOVE_THRESHOLD ||
-		              Math.abs(touch.clientY - touchStartPos.y) > MOVE_THRESHOLD;
-		
+		const moved =
+			Math.abs(touch.clientX - touchStartPos.x) > MOVE_THRESHOLD ||
+			Math.abs(touch.clientY - touchStartPos.y) > MOVE_THRESHOLD;
+
 		if (moved && longPressTimer) {
 			clearTimeout(longPressTimer);
 			longPressTimer = null;
@@ -150,7 +151,7 @@
 			const text = node.textContent || '';
 			const offset = range.startOffset;
 			const clickedChar = text[offset] || text[offset - 1];
-			
+
 			if (clickedChar && clickedChar.match(/\w/)) {
 				const wordRange = document.createRange();
 
@@ -221,8 +222,8 @@
 		};
 
 		// Check cache first
-		if (definitionCache.has(cleanWord)) {
-			wordData = definitionCache.get(cleanWord)!;
+		if (definitionCache[cleanWord]) {
+			wordData = definitionCache[cleanWord];
 			isLoading = false;
 			return;
 		}
@@ -232,21 +233,13 @@
 			if (response.ok) {
 				const data = await response.json();
 				wordData = data;
-				definitionCache.set(cleanWord, data); // Save to cache
+				definitionCache[cleanWord] = data; // Save to cache
 			}
 		} catch (error) {
 			console.error('Failed to fetch definition:', error);
 		} finally {
 			isLoading = false;
 		}
-	}
-
-	function speak(text: string) {
-		if (synth.speaking) {
-			synth.cancel();
-		}
-		const utterance = new SpeechSynthesisUtterance(text);
-		synth.speak(utterance);
 	}
 
 	function closePopup() {
@@ -258,26 +251,26 @@
 {#if showBanner}
 	<div
 		transition:fade={{ duration: 400 }}
-		class="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-primary text-black font-bold text-lg px-8 py-4 rounded-2xl shadow-xl"
+		class="bg-primary fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-2xl px-8 py-4 text-lg font-bold text-black shadow-xl"
 	>
 		Your story is ready!
 	</div>
 {/if}
 
-<div class="bg-gray-50 min-h-screen">
+<div class="min-h-screen bg-gray-50">
 	<div class="container mx-auto px-4 py-8">
-		<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
+		<div class="mx-auto max-w-4xl overflow-hidden rounded-lg bg-white shadow-lg">
 			<img
 				src={data.story.image_url}
 				alt="Story illustration"
-				class="w-full h-72 md:h-96 object-cover"
+				class="h-72 w-full object-cover md:h-96"
 			/>
 			<div class="p-8 md:p-12">
-				<h1 class="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Your New Story</h1>
+				<h1 class="mb-4 text-3xl font-bold text-gray-900 md:text-4xl">Your New Story</h1>
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
-					class="prose prose-lg max-w-none text-gray-700 text-2xl leading-relaxed relative"
+					class="prose prose-lg relative max-w-none text-2xl leading-relaxed text-gray-700"
 					on:mousedown={handleMouseDown}
 					on:mouseup={handleMouseUp}
 					on:mousemove={handleMouseMove}
@@ -294,10 +287,10 @@
 					/>
 					{@html storyHtml}
 				</div>
-				<div class="mt-8 pt-6 border-t">
+				<div class="mt-8 border-t pt-6">
 					<a
 						href="/"
-						class="inline-block bg-primary text-black font-bold py-3 px-6 rounded-xl hover:opacity-90 transition-opacity shadow-md"
+						class="bg-primary inline-block rounded-xl px-6 py-3 font-bold text-black shadow-md transition-opacity hover:opacity-90"
 						>Create Another Story</a
 					>
 				</div>
@@ -308,21 +301,21 @@
 
 {#if selectedWord}
 	<div
-		class="fixed p-4 bg-white rounded-lg shadow-xl border w-64"
+		class="fixed w-64 rounded-lg border bg-white p-4 shadow-xl"
 		style="top: {popupPosition.top}px; left: {popupPosition.left}px;"
 	>
 		<button
-			class="absolute top-1 right-1 w-9 h-9 flex items-center justify-center text-gray-500 hover:text-gray-800 text-2xl rounded-full hover:bg-gray-100"
+			class="absolute top-1 right-1 flex h-9 w-9 items-center justify-center rounded-full text-2xl text-gray-500 hover:bg-gray-100 hover:text-gray-800"
 			on:click={closePopup}>&times;</button
 		>
-		<h3 class="font-bold text-lg mb-2">{selectedWord}</h3>
+		<h3 class="mb-2 text-lg font-bold">{selectedWord}</h3>
 		{#if isLoading}
 			<p class="text-sm text-gray-600">Loading...</p>
 		{:else if wordData}
-			<p class="text-sm text-gray-600 mb-2"><em>{wordData.phonetic}</em></p>
-			<p class="text-sm mb-3">{wordData.definition}</p>
+			<p class="mb-2 text-sm text-gray-600"><em>{wordData.phonetic}</em></p>
+			<p class="mb-3 text-sm">{wordData.definition}</p>
 			<button
-				class="text-sm bg-primary text-black py-2 px-4 rounded-lg font-semibold hover:opacity-90 transition-opacity"
+				class="bg-primary rounded-lg px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
 				on:click={() => speak(wordData?.definition || '')}>Explain Word</button
 			>
 		{:else}

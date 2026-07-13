@@ -6,10 +6,29 @@
 
 	export let data: PageData;
 	export let form: ActionData;
+	const storyThemeOptions = ['space', 'animals', 'travel', 'food', 'fairy-tales', 'superheroes'];
 	let isGenerating = false;
 	let selectedUserId: number | null = null;
+	let selectedStoryThemes: string[] = [];
+	let customStoryTheme = '';
+	let useNoTheme = false;
+	let initializedForUserId: number | null = null;
 
-	function selectUser(user: typeof data.users[0]) {
+	$: selectedUser = data.users.find((user) => user.id === selectedUserId) ?? null;
+	$: if (selectedUser?.id !== initializedForUserId) {
+		initializedForUserId = selectedUser?.id ?? null;
+		selectedStoryThemes = selectedUser?.story_themes ? [...selectedUser.story_themes] : [];
+		customStoryTheme = '';
+		useNoTheme = false;
+	}
+	$: effectiveStoryThemes = useNoTheme
+		? []
+		: [
+				...selectedStoryThemes,
+				...(customStoryTheme.trim() ? [customStoryTheme.trim()] : [])
+			];
+
+	function selectUser(user: (typeof data.users)[0]) {
 		selectedUserId = user.id;
 		if (user.gender === 'boy') {
 			$theme = 'theme-boy';
@@ -17,30 +36,53 @@
 			$theme = 'theme-girl';
 		}
 	}
+
+	function clearThemes() {
+		useNoTheme = true;
+		selectedStoryThemes = [];
+		customStoryTheme = '';
+	}
+
+	function enableThemes() {
+		useNoTheme = false;
+	}
 </script>
 
-<div class="min-h-screen bg-gray-100 flex flex-col items-center justify-center pt-10">
+<div class="flex min-h-screen flex-col items-center justify-center bg-gray-100 pt-10">
 	<!-- User Selection -->
 	{#if data.users && data.users.length > 0}
-		<div class="mb-8">
-			<h2 class="text-xl font-semibold text-center mb-4">Who is reading?</h2>
-			<div class="flex gap-4">
-				{#each data.users as user}
+		<div class="mb-8 px-4">
+			<h2 class="mb-4 text-center text-xl font-semibold">Who is reading?</h2>
+			<div class="flex flex-wrap justify-center gap-4">
+				{#each data.users as user (user.id)}
 					<button
 						on:click={() => selectUser(user)}
-						class="px-6 py-3 rounded-lg shadow font-bold text-black bg-primary hover:opacity-90 transition-all"
+						class="min-w-32 rounded-2xl border-4 bg-white px-6 py-4 font-bold text-black shadow transition-all hover:-translate-y-1 hover:shadow-lg"
 						class:ring-4={selectedUserId === user.id}
-						class:ring-secondary={selectedUserId === user.id}
+						class:border-primary={selectedUserId === user.id}
+						class:border-transparent={selectedUserId !== user.id}
 					>
-						{user.name}
+						<span class="block text-lg">{user.name}</span>
+						<span class="block text-xs text-gray-500">Grade {user.grade}</span>
 					</button>
 				{/each}
 			</div>
 		</div>
 	{/if}
 
-	<div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
-		<h1 class="text-3xl font-bold text-center text-primary">Create a New Story</h1>
+	<div class="w-full max-w-xl space-y-6 rounded-2xl bg-white p-8 shadow-md">
+		<h1 class="text-primary text-center text-3xl font-bold">Create a New Story</h1>
+		{#if selectedUser}
+			<div class="bg-primary/10 rounded-xl p-4">
+				<p class="font-black text-gray-800">{selectedUser.name}'s story settings</p>
+				<p class="text-sm text-gray-600">
+					Themes: {effectiveStoryThemes.length > 0 ? effectiveStoryThemes.join(', ') : 'No theme'}
+				</p>
+				{#if selectedUser.character_description}
+					<p class="text-sm text-gray-600">Character look: {selectedUser.character_description}</p>
+				{/if}
+			</div>
+		{/if}
 		<form
 			method="POST"
 			action="?/generateStory"
@@ -64,16 +106,71 @@
 					id="prompt"
 					name="prompt"
 					rows="4"
-					class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
+					class="focus:border-primary focus:ring-primary mt-1 block w-full rounded-xl border-gray-300 shadow-sm sm:text-sm"
 					placeholder="An adventurous princess who befriends a friendly dragon..."
 					required
 					disabled={isGenerating}
 				></textarea>
 			</div>
+			{#if selectedUser}
+				<div>
+					<div class="mb-2 flex items-center justify-between gap-3">
+						<p class="block text-sm font-medium text-gray-700">Story themes</p>
+						<button
+							type="button"
+							class="rounded-full border border-gray-300 px-3 py-1 text-xs font-bold text-gray-700 disabled:opacity-60"
+							on:click={clearThemes}
+							disabled={isGenerating || useNoTheme}
+						>
+							No theme
+						</button>
+					</div>
+
+					{#if useNoTheme}
+						<input type="hidden" name="noTheme" value="true" />
+					{/if}
+
+					<div class="flex flex-wrap gap-2">
+						{#each storyThemeOptions as storyTheme (storyTheme)}
+							<label
+								class="rounded-full border border-gray-200 px-3 py-2 text-sm font-bold"
+								class:opacity-50={useNoTheme}
+							>
+								<input
+									type="checkbox"
+									name="storyThemes"
+									value={storyTheme}
+									class="mr-1"
+									bind:group={selectedStoryThemes}
+									on:change={enableThemes}
+									disabled={isGenerating || useNoTheme}
+								/>
+								{storyTheme}
+							</label>
+						{/each}
+					</div>
+					<label for="customStoryTheme" class="mt-3 block text-sm font-medium text-gray-700">
+						Custom theme
+					</label>
+					<input
+						id="customStoryTheme"
+						name="customStoryTheme"
+						type="text"
+						class="focus:border-primary focus:ring-primary mt-1 block w-full rounded-xl border-gray-300 shadow-sm sm:text-sm"
+						placeholder="dinosaurs, ocean mystery, music..."
+						bind:value={customStoryTheme}
+						on:input={enableThemes}
+						disabled={isGenerating || useNoTheme}
+					/>
+					<p class="mt-2 text-xs text-gray-500">
+						Leave every theme blank or choose No theme to let the prompt stand on its own.
+					</p>
+				</div>
+			{/if}
 			<div>
 				<button
 					type="submit"
-					class="w-full flex justify-center py-3 px-4 border border-black rounded-md shadow-sm text-sm font-medium text-black bg-primary hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-70 transition-opacity"
+					class="bg-primary focus:ring-primary flex w-full justify-center rounded-2xl border border-black px-4 py-4 text-lg font-black text-black shadow-sm transition-all hover:-translate-y-1 hover:shadow-lg focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:opacity-70"
 					disabled={isGenerating}
 				>
 					Generate Story
@@ -82,47 +179,27 @@
 		</form>
 
 		{#if form?.error && !isGenerating}
-			<p class="text-red-500 text-sm text-center">{form.error}</p>
+			<p class="text-center text-sm text-red-500">{form.error}</p>
 		{/if}
 	</div>
 
-	<!-- Load Stories Button (when no stories exist) -->
-	{#if data.stories && data.stories.length === 0 && data.latestBackup}
-		<div class="w-full max-w-md mx-auto mt-8">
-			<div class="bg-primary/10 border-2 border-primary/30 rounded-2xl p-8 text-center">
-				<p class="text-2xl font-bold text-gray-800 mb-2">Your old stories are waiting!</p>
-				<p class="text-gray-600 mb-6">
-					Saved on {new Date(data.latestBackup.timeCreated).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}
-				</p>
-				<form method="POST" action="?/loadStoriesFromBackup">
-					<button
-						type="submit"
-						class="px-8 py-3 bg-primary text-black rounded-xl font-bold shadow-md hover:opacity-90 transition-opacity text-lg"
-					>
-						Bring Them Back!
-					</button>
-				</form>
-			</div>
-		</div>
-	{/if}
-
 	<!-- Recent Stories -->
 	{#if data.stories && data.stories.length > 0}
-		<div class="w-full max-w-5xl mx-auto mt-12 px-4 pb-12">
-			<h2 class="text-2xl font-bold text-center mb-6">Recently Created Stories</h2>
-			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-				{#each data.stories as story}
+		<div class="mx-auto mt-12 w-full max-w-5xl px-4 pb-12">
+			<h2 class="mb-6 text-center text-2xl font-bold">Recently Created Stories</h2>
+			<div class="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+				{#each data.stories as story (story.id)}
 					<a
 						href="/story/{story.id}"
-						class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-xl transition-shadow"
+						class="overflow-hidden rounded-lg bg-white shadow-md transition-shadow hover:shadow-xl"
 					>
 						<img
-							src={story.image_url || 'https://via.placeholder.com/400x300?text=No+Image'}
+							src={story.image_url}
 							alt="Story illustration"
-							class="w-full h-40 object-cover"
+							class="h-40 w-full object-cover"
 						/>
 						<div class="p-4">
-							<p class="text-sm text-gray-700 truncate">"{story.prompt}"</p>
+							<p class="truncate text-sm text-gray-700">"{story.prompt}"</p>
 						</div>
 					</a>
 				{/each}

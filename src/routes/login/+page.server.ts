@@ -2,11 +2,9 @@ import { fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { ADMIN_PASSWORD } from '$lib/server/secrets';
 
-export const load: PageServerLoad = ({ locals }) => {
-	// If the user is already logged in, redirect them to the settings page
-	if (locals.user?.isAdmin) {
-		throw redirect(303, '/settings');
-	}
+export const load: PageServerLoad = () => {
+	// Always show the passcode form so settings stays locked behind an explicit unlock step.
+	return {};
 };
 
 export const actions: Actions = {
@@ -20,8 +18,7 @@ export const actions: Actions = {
 				path: '/',
 				httpOnly: true,
 				sameSite: 'strict',
-				secure: process.env.NODE_ENV === 'production',
-				maxAge: 60 * 60 * 24 * 7 // 1 week
+				secure: process.env.NODE_ENV === 'production'
 			});
 			// Redirect to the settings page on successful login
 			throw redirect(303, '/settings');

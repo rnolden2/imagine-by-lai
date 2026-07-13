@@ -4,6 +4,7 @@
 	import { fade, scale, fly } from 'svelte/transition';
 	import { theme } from '$lib/stores';
 	import MilestoneAnimation from '$lib/components/MilestoneAnimation.svelte';
+	import { speak } from '$lib/tts';
 
 	export let data: PageData;
 
@@ -84,17 +85,6 @@
 		setTimeout(() => inputEl?.focus(), 350);
 	}
 
-	// ── TTS ──────────────────────────────────────────────────────────
-	function speak(word: string) {
-		if (typeof window === 'undefined') return;
-		const synth = window.speechSynthesis;
-		if (synth.speaking) synth.cancel();
-		const utt = new SpeechSynthesisUtterance(word);
-		utt.rate = 0.85;
-		utt.pitch = 1.1;
-		synth.speak(utt);
-	}
-
 	// ── Submit ───────────────────────────────────────────────────────
 	function submit() {
 		if (feedback !== null || userInput.trim() === '') return;
@@ -147,7 +137,6 @@
 
 	// ── Score tracking ───────────────────────────────────────────────
 	let correctCount = 0;
-	$: totalAnswered = correctWords.length + missedWords.length;
 	$: remaining = wordList.length - currentIndex;
 
 	// ── Async log ────────────────────────────────────────────────────
@@ -175,17 +164,16 @@
 	$: attemptDots = Array.from({ length: MAX_ATTEMPTS }, (_, i) => i < attempts);
 </script>
 
-<div class="min-h-screen bg-gray-100 flex flex-col items-center pt-10 pb-16 px-4">
-
+<div class="flex min-h-screen flex-col items-center bg-gray-100 px-4 pt-10 pb-16">
 	<!-- User selector -->
 	{#if data.users && data.users.length > 0}
 		<div class="mb-8 text-center">
-			<h2 class="text-xl font-semibold mb-4">Who is spelling today?</h2>
-			<div class="flex gap-4 flex-wrap justify-center">
+			<h2 class="mb-4 text-xl font-semibold">Who is spelling today?</h2>
+			<div class="flex flex-wrap justify-center gap-4">
 				{#each data.users as user}
 					<button
 						on:click={() => selectUser(user)}
-						class="px-6 py-3 rounded-xl shadow font-bold text-black bg-primary hover:opacity-90 transition-all text-lg"
+						class="bg-primary rounded-xl px-6 py-3 text-lg font-bold text-black shadow transition-all hover:opacity-90"
 						class:ring-4={selectedUser?.id === user.id}
 						class:ring-secondary={selectedUser?.id === user.id}
 					>
@@ -197,24 +185,23 @@
 	{/if}
 
 	{#if selectedUser && wordList.length > 0}
-
 		{#if !sessionDone}
 			<!-- Score bar -->
 			<div
 				in:fade={{ duration: 300 }}
-				class="w-full max-w-lg mb-6 flex justify-between items-center bg-white rounded-2xl shadow px-6 py-3"
+				class="mb-6 flex w-full max-w-lg items-center justify-between rounded-2xl bg-white px-6 py-3 shadow"
 			>
 				<div class="text-center">
 					<p class="text-3xl font-black text-green-500">{correctWords.length}</p>
-					<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Correct</p>
+					<p class="text-xs font-semibold tracking-wide text-gray-500 uppercase">Correct</p>
 				</div>
 				<div class="text-center">
 					<p class="text-3xl font-black text-red-400">{missedWords.length}</p>
-					<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Missed</p>
+					<p class="text-xs font-semibold tracking-wide text-gray-500 uppercase">Missed</p>
 				</div>
 				<div class="text-center">
-					<p class="text-3xl font-black text-primary">{remaining}</p>
-					<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Left</p>
+					<p class="text-primary text-3xl font-black">{remaining}</p>
+					<p class="text-xs font-semibold tracking-wide text-gray-500 uppercase">Left</p>
 				</div>
 			</div>
 
@@ -222,32 +209,41 @@
 			{#key currentWord}
 				<div
 					in:scale={{ duration: 220, start: 0.96 }}
-					class="w-full max-w-lg bg-white rounded-3xl shadow-lg p-8 flex flex-col items-center gap-6"
+					class="flex w-full max-w-lg flex-col items-center gap-6 rounded-3xl bg-white p-8 shadow-lg"
 				>
 					<!-- Hear it button -->
 					<button
 						on:click={() => speak(currentWord)}
-						class="flex flex-col items-center gap-2 group"
+						class="group flex flex-col items-center gap-2"
 						aria-label="Hear the word"
 					>
-						<div class="w-20 h-20 rounded-full bg-primary/20 group-hover:bg-primary/40 transition-colors flex items-center justify-center">
-							<svg class="w-10 h-10 text-primary" fill="currentColor" viewBox="0 0 24 24">
-								<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+						<div
+							class="bg-primary/20 group-hover:bg-primary/40 flex h-20 w-20 items-center justify-center rounded-full transition-colors"
+						>
+							<svg class="text-primary h-10 w-10" fill="currentColor" viewBox="0 0 24 24">
+								<path
+									d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
+								/>
 							</svg>
 						</div>
-						<span class="text-sm font-semibold text-gray-500 group-hover:text-primary transition-colors">Hear it again</span>
+						<span
+							class="group-hover:text-primary text-sm font-semibold text-gray-500 transition-colors"
+							>Hear it again</span
+						>
 					</button>
 
 					<!-- Attempt dots -->
-					<div class="flex gap-3 items-center">
+					<div class="flex items-center gap-3">
 						{#each attemptDots as used, i}
 							<div
-								class="w-4 h-4 rounded-full transition-colors {used ? 'bg-red-400' : 'bg-gray-200'}"
+								class="h-4 w-4 rounded-full transition-colors {used ? 'bg-red-400' : 'bg-gray-200'}"
 								title="Attempt {i + 1}"
 							></div>
 						{/each}
-						<span class="text-sm text-gray-400 ml-1">
-							{attempts === 0 ? 'First try!' : `${MAX_ATTEMPTS - attempts} chance${MAX_ATTEMPTS - attempts === 1 ? '' : 's'} left`}
+						<span class="ml-1 text-sm text-gray-400">
+							{attempts === 0
+								? 'First try!'
+								: `${MAX_ATTEMPTS - attempts} chance${MAX_ATTEMPTS - attempts === 1 ? '' : 's'} left`}
 						</span>
 					</div>
 
@@ -263,14 +259,14 @@
 					{:else if feedback === 'failed'}
 						<div in:scale={{ duration: 200, start: 0.7 }} class="text-center">
 							<p class="text-xl font-bold text-red-400">The word was:</p>
-							<p class="text-4xl font-black text-gray-800 mt-1">{currentWord}</p>
+							<p class="mt-1 text-4xl font-black text-gray-800">{currentWord}</p>
 						</div>
 					{:else}
-						<p class="text-lg text-gray-400 font-medium">Type what you hear</p>
+						<p class="text-lg font-medium text-gray-400">Type what you hear</p>
 					{/if}
 
 					<!-- Input -->
-					<div class="flex gap-3 w-full">
+					<div class="flex w-full gap-3">
 						<input
 							bind:this={inputEl}
 							bind:value={userInput}
@@ -282,12 +278,12 @@
 							spellcheck="false"
 							placeholder="Spell it here..."
 							disabled={feedback !== null}
-							class="flex-1 text-center text-3xl font-bold rounded-2xl border-4 border-gray-200 focus:border-primary focus:outline-none py-4 transition-colors disabled:opacity-50 tracking-widest"
+							class="focus:border-primary flex-1 rounded-2xl border-4 border-gray-200 py-4 text-center text-3xl font-bold tracking-widest transition-colors focus:outline-none disabled:opacity-50"
 						/>
 						<button
 							on:click={submit}
 							disabled={feedback !== null || userInput.trim() === ''}
-							class="bg-primary text-black font-bold text-lg px-6 py-4 rounded-2xl hover:opacity-90 transition-opacity shadow disabled:opacity-40 disabled:cursor-not-allowed"
+							class="bg-primary rounded-2xl px-6 py-4 text-lg font-bold text-black shadow transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
 						>
 							Check
 						</button>
@@ -296,27 +292,26 @@
 					<p class="text-sm text-gray-400">Press Enter or tap Check</p>
 				</div>
 			{/key}
-
 		{:else}
 			<!-- Session complete -->
 			<div
 				in:scale={{ duration: 300, start: 0.9 }}
-				class="w-full max-w-lg bg-white rounded-3xl shadow-lg p-10 text-center flex flex-col items-center gap-6"
+				class="flex w-full max-w-lg flex-col items-center gap-6 rounded-3xl bg-white p-10 text-center shadow-lg"
 			>
 				<p class="text-4xl font-black text-gray-800">All done!</p>
 				<div class="flex gap-8">
 					<div>
 						<p class="text-5xl font-black text-green-500">{correctWords.length}</p>
-						<p class="text-sm text-gray-500 font-semibold mt-1">Correct</p>
+						<p class="mt-1 text-sm font-semibold text-gray-500">Correct</p>
 					</div>
 					<div>
 						<p class="text-5xl font-black text-red-400">{missedWords.length}</p>
-						<p class="text-sm text-gray-500 font-semibold mt-1">Missed</p>
+						<p class="mt-1 text-sm font-semibold text-gray-500">Missed</p>
 					</div>
 				</div>
 				<button
 					on:click={restartSession}
-					class="bg-primary text-black font-bold text-lg px-8 py-4 rounded-2xl hover:opacity-90 transition-opacity shadow-md mt-2"
+					class="bg-primary mt-2 rounded-2xl px-8 py-4 text-lg font-bold text-black shadow-md transition-opacity hover:opacity-90"
 				>
 					Go Again!
 				</button>
@@ -325,20 +320,17 @@
 
 		<!-- Word walls -->
 		{#if correctWords.length > 0 || missedWords.length > 0}
-			<div
-				in:fade={{ duration: 300 }}
-				class="w-full max-w-lg mt-8 grid grid-cols-2 gap-4"
-			>
+			<div in:fade={{ duration: 300 }} class="mt-8 grid w-full max-w-lg grid-cols-2 gap-4">
 				<!-- Correct -->
-				<div class="bg-white rounded-2xl shadow p-4">
-					<h3 class="text-sm font-bold text-green-600 uppercase tracking-wide mb-3">
+				<div class="rounded-2xl bg-white p-4 shadow">
+					<h3 class="mb-3 text-sm font-bold tracking-wide text-green-600 uppercase">
 						Got it ({correctWords.length})
 					</h3>
 					<div class="flex flex-wrap gap-2">
 						{#each correctWords as word}
 							<span
 								in:fly={{ y: 8, duration: 200 }}
-								class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-semibold"
+								class="rounded-full bg-green-100 px-3 py-1 text-sm font-semibold text-green-700"
 							>
 								{word}
 							</span>
@@ -347,15 +339,15 @@
 				</div>
 
 				<!-- Missed -->
-				<div class="bg-white rounded-2xl shadow p-4">
-					<h3 class="text-sm font-bold text-red-500 uppercase tracking-wide mb-3">
+				<div class="rounded-2xl bg-white p-4 shadow">
+					<h3 class="mb-3 text-sm font-bold tracking-wide text-red-500 uppercase">
 						Practice ({missedWords.length})
 					</h3>
 					<div class="flex flex-wrap gap-2">
 						{#each missedWords as word}
 							<span
 								in:fly={{ y: 8, duration: 200 }}
-								class="px-3 py-1 bg-red-100 text-red-600 rounded-full text-sm font-semibold"
+								class="rounded-full bg-red-100 px-3 py-1 text-sm font-semibold text-red-600"
 							>
 								{word}
 							</span>
@@ -364,13 +356,11 @@
 				</div>
 			</div>
 		{/if}
-
 	{:else if !selectedUser}
-		<div class="text-center text-gray-400 mt-12">
+		<div class="mt-12 text-center text-gray-400">
 			<p class="text-2xl font-bold">Select a reader above to start!</p>
 		</div>
 	{/if}
-
 </div>
 
 {#if showMilestone}
