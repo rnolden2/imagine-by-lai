@@ -26,46 +26,57 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	transition:fade={{ duration: 300 }}
-	class="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-primary/95 cursor-pointer"
+	class="bg-primary/95 fixed inset-0 z-[200] flex cursor-pointer flex-col items-center justify-center"
 	on:click={onDismiss}
 >
 	{#each starPositions as star}
 		<div
-			class="absolute star-burst"
+			class="star-burst absolute"
 			style="left:{star.x}%; top:{star.y}%; animation-delay:{star.delay}ms;"
 		>
-			<svg
-				width={star.size}
-				height={star.size}
-				viewBox="0 0 24 24"
-				fill={star.color}
-			>
-				<polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" />
+			<svg width={star.size} height={star.size} viewBox="0 0 24 24" fill={star.color}>
+				<polygon
+					points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
+				/>
 			</svg>
 		</div>
 	{/each}
 
 	<div in:scale={{ duration: 500, start: 0.3 }} class="flex flex-col items-center gap-4">
-		<p class="text-white/80 text-2xl font-bold tracking-wide">Amazing!</p>
-		<div class="text-white font-black text-9xl leading-none drop-shadow-lg pop-in">
+		<p class="text-2xl font-bold tracking-wide text-white/80">Amazing!</p>
+		<div class="pop-in text-9xl leading-none font-black text-white drop-shadow-lg">
 			{count}
 		</div>
-		<p class="text-white font-bold text-3xl">correct in a row!</p>
-		<p class="text-white/70 text-lg mt-4">Tap anywhere to keep going</p>
+		<p class="text-3xl font-bold text-white">correct in a row!</p>
+		<p class="mt-4 text-lg text-white/70">Tap anywhere to keep going</p>
 	</div>
 </div>
 
 <style>
 	@keyframes star-burst {
-		0% { transform: scale(0) rotate(0deg); opacity: 0; }
-		30% { opacity: 1; }
-		100% { transform: scale(1.4) rotate(180deg); opacity: 0; }
+		0% {
+			transform: scale(0) rotate(0deg);
+			opacity: 0;
+		}
+		30% {
+			opacity: 1;
+		}
+		100% {
+			transform: scale(1.4) rotate(180deg);
+			opacity: 0;
+		}
 	}
 
 	@keyframes pop-in {
-		0% { transform: scale(0.5); }
-		60% { transform: scale(1.15); }
-		100% { transform: scale(1); }
+		0% {
+			transform: scale(0.5);
+		}
+		60% {
+			transform: scale(1.15);
+		}
+		100% {
+			transform: scale(1);
+		}
 	}
 
 	.star-burst {

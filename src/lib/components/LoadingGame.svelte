@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import puppyPng from '$lib/assets/puppy.png';
 
 	type Puppy = {
@@ -63,11 +63,11 @@
 	}
 </script>
 
-<div class="fixed inset-0 bg-blue-200 bg-opacity-90 z-[100]">
-	<div class="relative w-full h-full">
+<div class="bg-opacity-90 fixed inset-0 z-[100] bg-blue-200">
+	<div class="relative h-full w-full">
 		{#each puppies as puppy (puppy.id)}
 			<button
-				class="absolute w-20 h-20 transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110"
+				class="absolute h-20 w-20 -translate-x-1/2 -translate-y-1/2 transform transition-transform hover:scale-110"
 				style="left: {puppy.x}%; top: {puppy.y}%;"
 				on:click={() => handleClick(puppy.id)}
 			>
@@ -75,7 +75,9 @@
 			</button>
 		{/each}
 	</div>
-	<div class="absolute bottom-5 right-5 text-2xl font-bold text-white bg-black bg-opacity-50 p-4 rounded-lg">
+	<div
+		class="bg-opacity-50 absolute right-5 bottom-5 rounded-lg bg-black p-4 text-2xl font-bold text-white"
+	>
 		Score: {score}
 	</div>
 	<div class="absolute top-5 left-1/2 -translate-x-1/2 text-2xl font-bold text-white">
