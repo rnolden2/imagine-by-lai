@@ -391,7 +391,6 @@
 					</svg>
 				{:else if currentProblem.op === 'number-recognition'}
 					<div class="text-center">
-						<p class="text-primary text-8xl font-black">{recognitionNumber}</p>
 						<button
 							type="button"
 							on:click={() => speak(String(recognitionNumber))}
