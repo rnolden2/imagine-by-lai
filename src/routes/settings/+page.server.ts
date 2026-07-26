@@ -440,7 +440,18 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const childId = Number(data.get('userId') ?? data.get('childId'));
 		const maxNumber = Number(data.get('maxNumber') ?? 10);
-		const operations = data.getAll('operations').map(String);
+		const allowedOperations = new Set([
+			'addition',
+			'subtraction',
+			'multiplication',
+			'division',
+			'fractions',
+			'time',
+			'number-recognition'
+		]);
+		const operations = [...new Set(data.getAll('operations').map(String))].filter((operation) =>
+			allowedOperations.has(operation)
+		);
 
 		if (!childId || operations.length === 0) {
 			return fail(400, { message: 'Choose a child and at least one math operation.' });

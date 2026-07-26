@@ -34,6 +34,15 @@
 		multiplication: 'x',
 		division: '/'
 	};
+	const VALID_OPERATIONS = new Set<Operation>([
+		'addition',
+		'subtraction',
+		'multiplication',
+		'division',
+		'fractions',
+		'time',
+		'number-recognition'
+	]);
 	const SHAPES = ['star', 'dot', 'heart'];
 
 	let selectedUser: (typeof data.users)[0] | null = null;
@@ -72,9 +81,18 @@
 	}
 
 	function normalizeOps(value: unknown): Operation[] {
-		if (Array.isArray(value)) return value as Operation[];
-		if (typeof value === 'string') return value.split(',').filter(Boolean) as Operation[];
-		return [];
+		const raw = Array.isArray(value)
+			? value.map(String)
+			: typeof value === 'string'
+				? value
+						.trim()
+						.replace(/^\{/, '')
+						.replace(/\}$/, '')
+						.split(',')
+				: [];
+		return [...new Set(raw.map((op) => op.trim().replace(/^"|"$/g, '')))].filter((op): op is Operation =>
+			VALID_OPERATIONS.has(op as Operation)
+		);
 	}
 
 	function resolveSettings(userId: number, grade: string): Settings {

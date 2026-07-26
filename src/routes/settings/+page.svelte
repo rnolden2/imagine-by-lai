@@ -18,6 +18,7 @@
 		'time',
 		'number-recognition'
 	];
+	const mathOperationSet = new Set(mathOperations);
 
 	let activeTab: Tab = 'kids';
 	let selectedStoryId = '';
@@ -30,9 +31,18 @@
 	let regeneratingStoryId: number | null = null;
 
 	function normalizeOps(value: unknown): string[] {
-		if (Array.isArray(value)) return value;
-		if (typeof value === 'string') return value.split(',').filter(Boolean);
-		return [];
+		const raw = Array.isArray(value)
+			? value.map(String)
+			: typeof value === 'string'
+				? value
+						.trim()
+						.replace(/^\{/, '')
+						.replace(/\}$/, '')
+						.split(',')
+				: [];
+		return [...new Set(raw.map((op) => op.trim().replace(/^"|"$/g, '')))].filter((op) =>
+			mathOperationSet.has(op)
+		);
 	}
 
 	function currentOps(userId: number, grade: string) {
@@ -42,7 +52,8 @@
 		if (saved) return normalizeOps(saved.operations);
 		if (grade === 'TK' || grade === 'K') return ['number-recognition', 'addition'];
 		if (grade === '1') return ['addition', 'subtraction', 'time'];
-		return ['addition', 'subtraction', 'multiplication', 'fractions', 'time'];
+		if (grade === '2') return ['addition', 'subtraction', 'fractions', 'time'];
+		return ['addition', 'subtraction', 'multiplication', 'division', 'fractions', 'time'];
 	}
 
 	function currentMax(userId: number, grade: string) {

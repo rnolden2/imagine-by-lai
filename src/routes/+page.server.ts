@@ -142,6 +142,7 @@ function generateStoryPrompt(
 		user.gender === 'boy'
 			? `a ${user.grade} grade boy named ${user.name}`
 			: `a ${user.grade} grade girl named ${user.name}`;
+	const characterDescription = user.character_description?.trim();
 
 	const storyThemes = storyThemesOverride ?? user.story_themes ?? [];
 	const themesStr =
@@ -158,6 +159,7 @@ Requirements:
 - Make it appropriate for grade ${user.grade}
 - Include a positive life lesson appropriate for grade ${user.grade}
 - Make the story engaging and age-appropriate
+- If the child is described or appears in the story, use this exact character description and do not invent or change their appearance: ${characterDescription || 'Use the child’s name, grade, and gender only; do not add specific physical features.'}
 
 At the very end, on a new line, write a short, simple sentence describing the main visual scene for an illustration.`;
 }
@@ -173,9 +175,16 @@ function generateImagePrompt(basePrompt: string, user: User | null): string {
 			? 'a young boy with short curly hair and brown skin'
 			: 'a young girl with long curly hair and brown skin';
 
-	const characterDescription = user.character_description || defaultDescription;
+	const characterDescription = user.character_description?.trim() || defaultDescription;
 
-	return `An illustration for a children's storybook: ${basePrompt}. If the illustration includes a child character, depict them as ${characterDescription}. Use a warm, colorful, and friendly art style suitable for grade ${user.grade} readers.`;
+	return `An illustration for a children's storybook: ${basePrompt}.
+
+IMPORTANT CHARACTER CONSISTENCY:
+- If a child appears in the illustration, they must be depicted as: ${characterDescription}.
+- This is the authoritative description. Do not invent, omit, replace, or contradict these character details.
+- Do not add a child to the illustration if the scene does not call for one.
+
+Use a warm, colorful, and friendly art style suitable for grade ${user.grade} readers.`;
 }
 
 // Validate API response
