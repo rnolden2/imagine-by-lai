@@ -8,13 +8,13 @@ const secretCache = new Map<string, string>();
 export const GCS_BUCKET_NAME = privateEnv.GCS_BUCKET_NAME ?? 'api-project-371618.appspot.com';
 export const GCS_PROJECT_ID =
 	privateEnv.GCS_PROJECT_ID ?? privateEnv.GOOGLE_CLOUD_PROJECT ?? DEFAULT_GCP_PROJECT_ID;
-export const ADMIN_PASSWORD = privateEnv.ADMIN_PASSWORD ?? '1111';
+export const ADMIN_PASSWORD = privateEnv.ADMIN_PASSWORD ?? '';
 
 const GEMINI_API_KEY_SECRET_NAME = privateEnv.GEMINI_API_KEY_SECRET_NAME ?? 'gemini_api';
 const OPENAI_API_KEY_SECRET_NAME = privateEnv.OPENAI_API_KEY_SECRET_NAME ?? 'openai_api_key';
-const PUBLIC_SUPABASE_URL = privateEnv.PUBLIC_SUPABASE_URL ?? 'supabase_url';
-const PUBLIC_SUPABASE_PUBLISHABLE_KEY =
-	privateEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? 'supabase_publishable_key';
+const SUPABASE_URL_SECRET_NAME = privateEnv.SUPABASE_URL_SECRET_NAME ?? 'supabase_url';
+const SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME =
+	privateEnv.SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME ?? 'supabase_service_role_key';
 
 async function getSecretValue(secretName: string): Promise<string> {
 	const cached = secretCache.get(secretName);
@@ -38,7 +38,10 @@ async function getSecretValue(secretName: string): Promise<string> {
 	return payload;
 }
 
-async function getConfiguredSecret(directValue: string | undefined, secretName: string): Promise<string> {
+async function getConfiguredSecret(
+	directValue: string | undefined,
+	secretName: string
+): Promise<string> {
 	if (directValue) return directValue;
 	return getSecretValue(secretName);
 }
@@ -54,7 +57,7 @@ export async function getOpenAIApiKey(): Promise<string> {
 export async function getSupabaseUrl(): Promise<string> {
 	return getConfiguredSecret(
 		privateEnv.SUPABASE_URL ?? publicEnv.PUBLIC_SUPABASE_URL,
-		PUBLIC_SUPABASE_URL
+		SUPABASE_URL_SECRET_NAME
 	);
 }
 
@@ -62,12 +65,5 @@ export async function getSupabaseServiceRoleKey(): Promise<string> {
 	const directServerKey = privateEnv.SUPABASE_SERVICE_ROLE_KEY ?? privateEnv.SUPABASE_SECRET_KEY;
 	if (directServerKey) return directServerKey;
 
-	const localPublishableKey =
-		publicEnv.PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? publicEnv.PUBLIC_SUPABASE_ANON_KEY;
-	if (localPublishableKey) return localPublishableKey;
-
-	return getConfiguredSecret(
-		undefined,
-		PUBLIC_SUPABASE_PUBLISHABLE_KEY
-	);
+	return getConfiguredSecret(undefined, SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME);
 }

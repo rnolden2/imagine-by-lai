@@ -1,6 +1,14 @@
 <script lang="ts">
 	import type { ActionData, PageData } from './$types';
 	import { enhance } from '$app/forms';
+	import { notifyMathSettingsSaved } from '$lib/math-settings-sync';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import {
+		MATH_OPERATIONS as mathOperations,
+		NUMBER_RANGES,
+		MINUTE_STEPS,
+		resolveMathSettings
+	} from '$lib/math';
 
 	export let data: PageData;
 	export let form: ActionData;
@@ -9,18 +17,32 @@
 
 	const grades = ['TK', 'K', '1', '2', '3', '4', '5', '6', '7', '8'];
 	const storyThemes = ['space', 'animals', 'travel', 'food', 'fairy-tales', 'superheroes'];
-	const mathOperations = [
-		'addition',
-		'subtraction',
-		'multiplication',
-		'division',
-		'fractions',
-		'time',
-		'number-recognition'
-	];
-	const mathOperationSet = new Set(mathOperations);
-
-	let activeTab: Tab = 'kids';
+	let activeTab: Tab = form && 'mathAction' in form ? 'math' : 'kids';
+	let pendingMath: number | null = null;
+	const enhanceMath: SubmitFunction = ({ formData, action, cancel }) => {
+		if (pendingMath !== null) {
+			cancel();
+			return;
+		}
+		if (
+			action.search.includes('clearMathStats') &&
+			!confirm('Clear this child’s math history? This cannot be undone.')
+		) {
+			cancel();
+			return;
+		}
+		pendingMath = Number(formData.get('userId'));
+		return async ({ update, result }) => {
+			try {
+				if (action.search.includes('saveMathSettings') && result.type === 'success') {
+					notifyMathSettingsSaved();
+				}
+				await update({ reset: false });
+			} finally {
+				pendingMath = null;
+			}
+		};
+	};
 	let selectedStoryId = '';
 	let selectedImageUrl = '';
 	let selectedImageObjectName = '';
@@ -30,40 +52,11 @@
 	let createStoryImageObjectName = '';
 	let regeneratingStoryId: number | null = null;
 
-	function normalizeOps(value: unknown): string[] {
-		const raw = Array.isArray(value)
-			? value.map(String)
-			: typeof value === 'string'
-				? value
-						.trim()
-						.replace(/^\{/, '')
-						.replace(/\}$/, '')
-						.split(',')
-				: [];
-		return [...new Set(raw.map((op) => op.trim().replace(/^"|"$/g, '')))].filter((op) =>
-			mathOperationSet.has(op)
+	function currentSettings(settings: PageData['mathSettings'], userId: number, grade: string) {
+		return resolveMathSettings(
+			grade,
+			settings.find((setting) => (setting.child_id ?? setting.user_id) === userId)
 		);
-	}
-
-	function currentOps(userId: number, grade: string) {
-		const saved = data.mathSettings.find(
-			(setting) => (setting.child_id ?? setting.user_id) === userId
-		);
-		if (saved) return normalizeOps(saved.operations);
-		if (grade === 'TK' || grade === 'K') return ['number-recognition', 'addition'];
-		if (grade === '1') return ['addition', 'subtraction', 'time'];
-		if (grade === '2') return ['addition', 'subtraction', 'fractions', 'time'];
-		return ['addition', 'subtraction', 'multiplication', 'division', 'fractions', 'time'];
-	}
-
-	function currentMax(userId: number, grade: string) {
-		const saved = data.mathSettings.find(
-			(setting) => (setting.child_id ?? setting.user_id) === userId
-		);
-		const config = saved?.config ?? {};
-		if (config.maxNumber) return Number(config.maxNumber);
-		if (grade === 'TK' || grade === 'K' || grade === '1') return 10;
-		return 100;
 	}
 
 	function pct(correct: number, total: number) {
@@ -102,6 +95,7 @@
 
 		{#if form?.message}
 			<div
+				role="status"
 				class="mb-4 rounded-lg border bg-white px-4 py-3 text-sm font-semibold {form.success
 					? 'border-emerald-200 text-emerald-700'
 					: 'border-rose-200 text-rose-700'}"
@@ -188,12 +182,7 @@
 
 				<div class="space-y-4">
 					{#each data.users as user}
-						<form
-							method="POST"
-							action="?/saveChildSettings"
-							use:enhance
-							class="rounded-xl bg-white p-5 shadow"
-						>
+						<form method="POST" action="?/saveChildSettings" use:enhance class="p-5">
 							<input type="hidden" name="id" value={user.id} />
 							<div class="grid gap-4 lg:grid-cols-[1fr_160px_160px]">
 								<input
@@ -288,53 +277,85 @@
 		{:else if activeTab === 'math'}
 			<section class="space-y-6">
 				<div class="grid gap-4 md:grid-cols-2">
-					{#each data.users as user}
-						{@const ops = currentOps(user.id, user.grade)}
-						{@const max = currentMax(user.id, user.grade)}
-						<form
-							method="POST"
-							action="?/saveMathSettings"
-							use:enhance
-							class="rounded-xl bg-white p-5 shadow"
-						>
-							<input type="hidden" name="userId" value={user.id} />
-							<h2 class="mb-4 text-xl font-black text-slate-800">{user.name}</h2>
-							<div class="mb-4 flex flex-wrap gap-2">
-								{#each mathOperations as op}
-									<label class="rounded-full border border-slate-200 px-3 py-2 text-sm font-bold">
-										<input
-											type="checkbox"
-											name="operations"
-											value={op}
-											checked={ops.includes(op)}
-											class="mr-1"
-										/>
-										{op}
-									</label>
-								{/each}
-							</div>
-							<select name="maxNumber" class="mb-4 w-full rounded-lg border-slate-300">
-								{#each [10, 20, 100, 1000] as range}
-									<option value={range} selected={max === range}>1 to {range}</option>
-								{/each}
-							</select>
-							<div class="flex items-center gap-3">
-								<button class="bg-primary rounded-lg px-4 py-2 font-black text-slate-900"
-									>Save Math</button
+					{#each data.users as user (user.id)}
+						{@const settings = currentSettings(data.mathSettings, user.id, user.grade)}
+						<div class="rounded-xl bg-white shadow">
+							<form method="POST" action="?/saveMathSettings" use:enhance={enhanceMath} class="p-5">
+								<input type="hidden" name="userId" value={user.id} />
+								<h2 class="mb-4 text-xl font-black text-slate-800">{user.name}</h2>
+								<fieldset disabled={pendingMath !== null}>
+									<legend class="sr-only">Math settings for {user.name}</legend>
+									<div class="mb-4 flex flex-wrap gap-2">
+										{#each mathOperations as op}
+											<label
+												class="rounded-full border border-slate-200 px-3 py-2 text-sm font-bold"
+											>
+												<input
+													type="checkbox"
+													name="operations"
+													value={op}
+													checked={settings.operations.includes(op)}
+													class="mr-1"
+												/>
+												{op}
+											</label>
+										{/each}
+									</div>
+									<label for="range-{user.id}" class="block text-sm font-bold">Number range</label>
+									<select
+										id="range-{user.id}"
+										name="maxNumber"
+										class="mb-4 w-full rounded-lg border-slate-300"
+									>
+										{#each NUMBER_RANGES as range}
+											<option value={range} selected={settings.maxNumber === range}
+												>1 to {range}</option
+											>
+										{/each}
+									</select>
+									<label for="clock-{user.id}" class="block text-sm font-bold">Clock interval</label
+									>
+									<select
+										id="clock-{user.id}"
+										name="minuteStep"
+										class="mb-4 w-full rounded-lg border-slate-300"
+									>
+										{#each MINUTE_STEPS as step}<option
+												value={step}
+												selected={settings.minuteStep === step}
+												>{step === 60 ? 'Whole hours' : `${step} minutes`}</option
+											>{/each}
+									</select>
+									<p class="mb-4 text-sm text-slate-500">
+										Multiplication and division use factors up to 12. Counting goes up to 20.
+										Fractions use 2, 3, 4, 6, or 8 equal parts.
+									</p>
+									<div class="flex items-center gap-3">
+										<button class="bg-primary rounded-lg px-4 py-2 font-black text-slate-900"
+											>{pendingMath === user.id ? 'Saving…' : 'Save Math'}</button
+										>
+									</div>
+								</fieldset>
+							</form>
+							<form
+								method="POST"
+								action="?/clearMathStats"
+								use:enhance={enhanceMath}
+								class="px-5 pb-3"
+							>
+								<input type="hidden" name="userId" value={user.id} />
+								<button disabled={pendingMath !== null} class="text-sm font-bold text-rose-600"
+									>Clear stats for {user.name}</button
 								>
-								<button
-									type="submit"
-									formaction="?/clearMathStats"
-									class="text-sm font-bold text-rose-600"
-								>
-									Clear stats
-								</button>
-							</div>
-						</form>
+							</form>
+						</div>
 					{/each}
 				</div>
 				<div class="rounded-xl bg-white p-5 shadow">
 					<h2 class="mb-4 text-xl font-black text-slate-800">Math History</h2>
+					<p class="mb-3 text-sm text-slate-500">
+						Recent history, based on the latest 1,000 answers. Older sessions may be incomplete.
+					</p>
 					<div class="overflow-x-auto">
 						<table class="w-full text-sm">
 							<thead

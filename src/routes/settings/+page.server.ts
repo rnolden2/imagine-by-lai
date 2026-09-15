@@ -1,3 +1,4 @@
+import { saveMathSettings, clearMathStats } from '$lib/server/math-settings';
 import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
 import { fail, isRedirect, redirect, error as kitError } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
@@ -36,9 +37,10 @@ function groupMathStats(rows: any[]): MathSessionSummary[] {
 	const grouped = new Map<string, MathSessionSummary>();
 
 	for (const row of rows) {
-		const existing = grouped.get(row.session_id);
+		const key = `${row.child_id}:${row.session_id}`;
+		const existing = grouped.get(key);
 		if (!existing) {
-			grouped.set(row.session_id, {
+			grouped.set(key, {
 				child_name: row.child_profiles?.name ?? null,
 				user_name: row.child_profiles?.name ?? null,
 				session_id: row.session_id,
@@ -48,7 +50,7 @@ function groupMathStats(rows: any[]): MathSessionSummary[] {
 			});
 		}
 
-		const session = grouped.get(row.session_id)!;
+		const session = grouped.get(key)!;
 		session.total += 1;
 		if (row.is_correct) session.correct += 1;
 		if (new Date(row.created_at).getTime() < new Date(session.started_at).getTime()) {
@@ -167,7 +169,7 @@ export const load: PageServerLoad = async () => {
 			supabase.from('math_settings').select('*').order('child_id', { ascending: true }),
 			supabase
 				.from('math_attempts')
-				.select('session_id, created_at, is_correct, child_profiles(name)')
+				.select('child_id, session_id, created_at, is_correct, child_profiles(name)')
 				.order('created_at', { ascending: false })
 				.limit(1000),
 			supabase
@@ -201,7 +203,8 @@ export const load: PageServerLoad = async () => {
 	}
 
 	const stories = (storiesResult.data ?? []).map(mapStory);
-	let availableImages: { url: string; objectName: string; name: string; timeCreated: string }[] = [];
+	let availableImages: { url: string; objectName: string; name: string; timeCreated: string }[] =
+		[];
 	let gcsError: string | null = null;
 
 	if (GCS_BUCKET_NAME) {
@@ -211,7 +214,9 @@ export const load: PageServerLoad = async () => {
 					.map((story) => story.image_object_name ?? objectNameFromGcsUrl(story.image_url ?? ''))
 					.filter(Boolean) as string[]
 			);
-			const assignedUrls = new Set(stories.map((story) => story.image_url).filter(Boolean) as string[]);
+			const assignedUrls = new Set(
+				stories.map((story) => story.image_url).filter(Boolean) as string[]
+			);
 			availableImages = await listUnassignedStoryImages(assignedObjectNames, assignedUrls);
 		} catch (error) {
 			console.error('Failed to fetch story images:', error);
@@ -298,7 +303,10 @@ export const actions: Actions = {
 	deleteUser: async ({ request }) => {
 		const data = await request.formData();
 		const supabase = await getSupabase();
-		const { error } = await supabase.from('child_profiles').delete().eq('id', Number(data.get('id')));
+		const { error } = await supabase
+			.from('child_profiles')
+			.delete()
+			.eq('id', Number(data.get('id')));
 		if (error) throw error;
 		return { success: true };
 	},
@@ -320,7 +328,10 @@ export const actions: Actions = {
 	deleteLesson: async ({ request }) => {
 		const data = await request.formData();
 		const supabase = await getSupabase();
-		const { error } = await supabase.from('lessons').delete().eq('id', Number(data.get('id')));
+		const { error } = await supabase
+			.from('lessons')
+			.delete()
+			.eq('id', Number(data.get('id')));
 		if (error) throw error;
 		return { success: true };
 	},
@@ -351,7 +362,10 @@ export const actions: Actions = {
 			try {
 				await deleteStoryImageObject(imageObjectName);
 			} catch (storageError) {
-				console.error(`Deleted story #${storyId} but failed to delete image ${imageObjectName}:`, storageError);
+				console.error(
+					`Deleted story #${storyId} but failed to delete image ${imageObjectName}:`,
+					storageError
+				);
 			}
 		}
 
@@ -436,48 +450,7 @@ export const actions: Actions = {
 		});
 	},
 
-	saveMathSettings: async ({ request }) => {
-		const data = await request.formData();
-		const childId = Number(data.get('userId') ?? data.get('childId'));
-		const maxNumber = Number(data.get('maxNumber') ?? 10);
-		const allowedOperations = new Set([
-			'addition',
-			'subtraction',
-			'multiplication',
-			'division',
-			'fractions',
-			'time',
-			'number-recognition'
-		]);
-		const operations = [...new Set(data.getAll('operations').map(String))].filter((operation) =>
-			allowedOperations.has(operation)
-		);
-
-		if (!childId || operations.length === 0) {
-			return fail(400, { message: 'Choose a child and at least one math operation.' });
-		}
-
-		const config = {
-			maxNumber: Number.isFinite(maxNumber) ? maxNumber : 10,
-			fractions: { denominators: [2, 3, 4, 6, 8] },
-			time: { minuteStep: 5 },
-			recognition: { maxNumber: Math.min(Number.isFinite(maxNumber) ? maxNumber : 10, 20) }
-		};
-
-		const supabase = await getSupabase();
-		const { error } = await supabase.from('math_settings').upsert(
-			{
-				child_id: childId,
-				operations,
-				config,
-				updated_at: new Date().toISOString()
-			},
-			{ onConflict: 'child_id' }
-		);
-		if (error) throw error;
-
-		return { success: true };
-	},
+	saveMathSettings,
 
 	addSpellingWord: async ({ request }) => {
 		const data = await request.formData();
@@ -510,7 +483,10 @@ export const actions: Actions = {
 	deleteSpellingWord: async ({ request }) => {
 		const data = await request.formData();
 		const supabase = await getSupabase();
-		const { error } = await supabase.from('spelling_words').delete().eq('id', Number(data.get('id')));
+		const { error } = await supabase
+			.from('spelling_words')
+			.delete()
+			.eq('id', Number(data.get('id')));
 		if (error) throw error;
 		return { success: true };
 	},
@@ -525,15 +501,7 @@ export const actions: Actions = {
 		return { success: true };
 	},
 
-	clearMathStats: async ({ request }) => {
-		const data = await request.formData();
-		const childId = data.get('userId') ?? data.get('childId');
-		const supabase = await getSupabase();
-		const query = supabase.from('math_attempts').delete();
-		const { error } = childId ? await query.eq('child_id', Number(childId)) : await query.neq('id', 0);
-		if (error) throw error;
-		return { success: true };
-	},
+	clearMathStats,
 
 	createStoryFromImage: async ({ request }) => {
 		const data = await request.formData();

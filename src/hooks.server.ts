@@ -1,16 +1,23 @@
+import { verifyAdminSession } from '$lib/server/admin-session';
+import { ADMIN_PASSWORD } from '$lib/server/secrets';
+import { base } from '$app/paths';
 import type { Handle, HandleServerError } from '@sveltejs/kit';
 import { SupabaseConnectionError } from '$lib/server/db';
 import { redirect } from '@sveltejs/kit';
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const session = event.cookies.get('session');
-	if (session === 'admin') {
+	if (verifyAdminSession(session, ADMIN_PASSWORD)) {
 		event.locals.user = { isAdmin: true };
 	}
 
 	// Secure the /settings routes to prevent kids from accessing admin controls
-	if (event.url.pathname.startsWith('/settings') && !event.locals.user?.isAdmin) {
-		throw redirect(303, '/login');
+	if (
+		(event.url.pathname === `${base}/settings` ||
+			event.url.pathname.startsWith(`${base}/settings/`)) &&
+		!event.locals.user?.isAdmin
+	) {
+		throw redirect(303, `${base}/login`);
 	}
 
 	return resolve(event);

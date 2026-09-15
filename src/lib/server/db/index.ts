@@ -48,7 +48,7 @@ export async function getSupabase(): Promise<SupabaseClient> {
 
 		if (!serviceRoleKey || serviceRoleKey.length < 40) {
 			throw new SupabaseConnectionError(
-				'Supabase is misconfigured: set SUPABASE_SERVICE_ROLE_KEY for deployment or PUBLIC_SUPABASE_PUBLISHABLE_KEY for local development.'
+				'Supabase is misconfigured: set a server-only SUPABASE_SERVICE_ROLE_KEY.'
 			);
 		}
 

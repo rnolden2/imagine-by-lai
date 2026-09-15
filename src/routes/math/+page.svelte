@@ -1,49 +1,15 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { base } from '$app/paths';
+	import { watchMathSettings } from '$lib/math-settings-sync';
+	import { generateProblem, resolveMathSettings, type Settings, type Problem } from '$lib/math';
 	import { fade, scale } from 'svelte/transition';
 	import { theme } from '$lib/stores';
 	import { speak } from '$lib/tts';
 	import MilestoneAnimation from '$lib/components/MilestoneAnimation.svelte';
 
 	export let data: PageData;
-
-	type Operation =
-		| 'addition'
-		| 'subtraction'
-		| 'multiplication'
-		| 'division'
-		| 'fractions'
-		| 'time'
-		| 'number-recognition';
-	type Settings = { operations: Operation[]; maxNumber: number };
-	type Problem = {
-		op: Operation;
-		prompt: string;
-		answer: string;
-		choices?: string[];
-		state: Record<string, unknown>;
-		symbol?: string;
-		num1?: number;
-		num2?: number;
-	};
-
-	const SYMBOLS: Record<string, string> = {
-		addition: '+',
-		subtraction: '-',
-		multiplication: 'x',
-		division: '/'
-	};
-	const VALID_OPERATIONS = new Set<Operation>([
-		'addition',
-		'subtraction',
-		'multiplication',
-		'division',
-		'fractions',
-		'time',
-		'number-recognition'
-	]);
-	const SHAPES = ['star', 'dot', 'heart'];
 
 	let selectedUser: (typeof data.users)[0] | null = null;
 	let currentSettings: Settings | null = null;
@@ -58,56 +24,29 @@
 	let showMilestone = false;
 	let milestoneCount = 0;
 
-	onMount(() => {
-		sessionId = crypto.randomUUID();
+	let focusTimer: ReturnType<typeof setTimeout> | null = null;
+	let historyError = false;
+	let settingsError = false;
+	onMount(() =>
+		watchMathSettings(
+			(mathSettings) => (data = { ...data, mathSettings }),
+			(failed) => (settingsError = failed)
+		)
+	);
+	onDestroy(() => {
+		if (feedbackTimer) clearTimeout(feedbackTimer);
+		if (focusTimer) clearTimeout(focusTimer);
 	});
 
 	function range(n: number) {
 		return Array.from({ length: n }, (_, i) => i);
 	}
 
-
-	function getDefaultSettings(grade: string): Settings {
-		if (grade === 'TK' || grade === 'K') {
-			return { operations: ['number-recognition', 'addition'], maxNumber: 10 };
-		}
-		if (grade === '1') return { operations: ['addition', 'subtraction', 'time'], maxNumber: 10 };
-		if (grade === '2')
-			return { operations: ['addition', 'subtraction', 'fractions', 'time'], maxNumber: 100 };
-		return {
-			operations: ['addition', 'subtraction', 'multiplication', 'division', 'fractions', 'time'],
-			maxNumber: 100
-		};
-	}
-
-	function normalizeOps(value: unknown): Operation[] {
-		const raw = Array.isArray(value)
-			? value.map(String)
-			: typeof value === 'string'
-				? value
-						.trim()
-						.replace(/^\{/, '')
-						.replace(/\}$/, '')
-						.split(',')
-				: [];
-		return [...new Set(raw.map((op) => op.trim().replace(/^"|"$/g, '')))].filter((op): op is Operation =>
-			VALID_OPERATIONS.has(op as Operation)
-		);
-	}
-
 	function resolveSettings(userId: number, grade: string): Settings {
-		const saved = data.mathSettings.find(
-			(setting) => (setting.child_id ?? setting.user_id) === userId
+		return resolveMathSettings(
+			grade,
+			data.mathSettings.find((setting) => (setting.child_id ?? setting.user_id) === userId)
 		);
-		if (!saved) return getDefaultSettings(grade);
-
-		const config = saved.config ?? {};
-		return {
-			operations: normalizeOps(saved.operations),
-			maxNumber: Number(
-				config.maxNumber ?? (saved as unknown as { max_number?: number }).max_number ?? 10
-			)
-		};
 	}
 
 	function selectUser(user: (typeof data.users)[0]) {
@@ -117,128 +56,38 @@
 		startSession();
 	}
 
+	function applySavedSettings(mathSettings: PageData['mathSettings'], user: typeof selectedUser) {
+		if (!user) return;
+		const next = resolveMathSettings(
+			user.grade,
+			mathSettings.find((setting) => (setting.child_id ?? setting.user_id) === user.id)
+		);
+		// Background refreshes must not interrupt an answer unless the settings changed.
+		if (JSON.stringify(next) === JSON.stringify(currentSettings)) return;
+		currentSettings = next;
+		if (feedbackTimer) clearTimeout(feedbackTimer);
+		nextProblem();
+	}
+
+	$: applySavedSettings(data.mathSettings, selectedUser);
+
 	function startSession() {
+		if (feedbackTimer) clearTimeout(feedbackTimer);
+		sessionId = crypto.randomUUID();
+		showMilestone = false;
+		historyError = false;
 		correctCount = 0;
 		totalCount = 0;
 		nextProblem();
 	}
 
-	function randomInt(min: number, max: number) {
-		return Math.floor(Math.random() * (max - min + 1)) + min;
-	}
-
-	function shuffled<T>(values: T[]) {
-		return [...values].sort(() => Math.random() - 0.5);
-	}
-
-	function makeChoices(answer: string, distractors: string[]) {
-		return shuffled([...new Set([answer, ...distractors])]).slice(0, 4);
-	}
-
-	function generateArithmetic(op: Operation): Problem {
-		const max = currentSettings?.maxNumber ?? 10;
-		let num1 = randomInt(1, max);
-		let num2 = randomInt(1, max);
-		let answer = num1 + num2;
-
-		if (op === 'subtraction') {
-			num1 = randomInt(2, max);
-			num2 = randomInt(1, num1 - 1);
-			answer = num1 - num2;
-		} else if (op === 'multiplication') {
-			const cap = Math.min(max, 12);
-			num1 = randomInt(1, cap);
-			num2 = randomInt(1, cap);
-			answer = num1 * num2;
-		} else if (op === 'division') {
-			const cap = Math.min(max, 12);
-			num2 = randomInt(1, cap);
-			answer = randomInt(1, cap);
-			num1 = num2 * answer;
-		}
-
-		return {
-			op,
-			prompt: 'What is the answer?',
-			answer: String(answer),
-			state: { num1, num2 },
-			symbol: SYMBOLS[op],
-			num1,
-			num2
-		};
-	}
-
-	function generateNumberRecognition(): Problem {
-		const max = Math.min(currentSettings?.maxNumber ?? 10, 20);
-		const number = randomInt(1, max);
-		const choices = makeChoices(String(number), [
-			String(Math.max(1, number - 1)),
-			String(Math.min(max, number + 1)),
-			String(randomInt(1, max))
-		]);
-
-		return {
-			op: 'number-recognition',
-			prompt: 'Which number matches this group?',
-			answer: String(number),
-			choices,
-			state: { number, choices, visualType: SHAPES[randomInt(0, SHAPES.length - 1)] }
-		};
-	}
-
-	function generateFraction(): Problem {
-		const denominator = [2, 3, 4, 6, 8][randomInt(0, 4)];
-		const numerator = randomInt(1, denominator - 1);
-		const answer = `${numerator}/${denominator}`;
-
-		return {
-			op: 'fractions',
-			prompt: 'What fraction is shaded?',
-			answer,
-			choices: makeChoices(answer, [
-				`1/${denominator}`,
-				`${denominator - numerator}/${denominator}`,
-				'1/2'
-			]),
-			state: { numerator, denominator, shadingPattern: 'pie' }
-		};
-	}
-
-	function generateTime(): Problem {
-		const hour = randomInt(1, 12);
-		const minute = [0, 15, 30, 45][randomInt(0, 3)];
-		const answer = `${hour}:${String(minute).padStart(2, '0')}`;
-
-		return {
-			op: 'time',
-			prompt: 'What time is shown?',
-			answer,
-			choices: makeChoices(answer, [
-				`${hour}:00`,
-				`${randomInt(1, 12)}:${String(minute).padStart(2, '0')}`,
-				`${randomInt(1, 12)}:${String([0, 15, 30, 45][randomInt(0, 3)]).padStart(2, '0')}`
-			]),
-			state: { hour, minute }
-		};
-	}
-
-	function generateProblem(): Problem {
-		const ops: Operation[] = currentSettings?.operations.length
-			? currentSettings.operations
-			: ['addition'];
-		const op = ops[randomInt(0, ops.length - 1)];
-
-		if (op === 'number-recognition') return generateNumberRecognition();
-		if (op === 'fractions') return generateFraction();
-		if (op === 'time') return generateTime();
-		return generateArithmetic(op);
-	}
-
 	function nextProblem() {
-		currentProblem = generateProblem();
+		if (!currentSettings) return;
+		currentProblem = generateProblem(currentSettings);
 		userAnswer = '';
 		feedback = null;
-		setTimeout(() => inputEl?.focus(), 80);
+		if (focusTimer) clearTimeout(focusTimer);
+		focusTimer = setTimeout(() => inputEl?.focus(), 80);
 	}
 
 	function chooseAnswer(answer: string) {
@@ -247,7 +96,7 @@
 	}
 
 	async function submitAnswer() {
-		if (!currentProblem || userAnswer.trim() === '') return;
+		if (!currentProblem || feedback !== null || userAnswer.trim() === '') return;
 
 		const given = userAnswer.trim();
 		const isCorrect = given === currentProblem.answer;
@@ -265,8 +114,10 @@
 		}
 
 		if (selectedUser && sessionId) {
-			fetch('/api/math', {
+			const attemptSession = sessionId;
+			fetch(`${base}/api/math`, {
 				method: 'POST',
+				keepalive: true,
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					childId: selectedUser.id,
@@ -280,7 +131,13 @@
 					givenAnswer: given,
 					isCorrect
 				})
-			}).catch(() => {});
+			})
+				.then((response) => {
+					if (!response.ok) throw new Error('History save failed');
+				})
+				.catch(() => {
+					if (sessionId === attemptSession) historyError = true;
+				});
 		}
 
 		if (feedbackTimer) clearTimeout(feedbackTimer);
@@ -303,6 +160,12 @@
 
 <div class="min-h-screen bg-sky-50 px-4 py-8">
 	<section class="mx-auto max-w-5xl">
+		{#if settingsError}<p role="status" class="mb-4 text-center text-amber-800">
+				Settings could not be refreshed. You can keep practicing; we’ll retry automatically.
+			</p>{/if}
+		{#if historyError}<p role="status" class="mb-4 text-center text-rose-700">
+				Some answers could not be saved to history. You can keep practicing.
+			</p>{/if}
 		{#if data.users && data.users.length > 0}
 			<div class="mb-8 text-center">
 				<h1 class="mb-4 text-2xl font-black text-slate-800">Math Practice</h1>
@@ -351,7 +214,7 @@
 					<div class="grid h-52 w-52 place-items-center rounded-full bg-slate-100">
 						<div
 							class="h-44 w-44 rounded-full border-8 border-slate-700"
-							style={`background: conic-gradient(rgb(var(--color-primary)) 0 ${fractionNumerator / fractionDenominator}turn, white 0 1turn);`}
+							style={`background: conic-gradient(rgb(var(--color-primary)) 0 ${fractionNumerator / fractionDenominator}turn, white 0 1turn); background-image: repeating-conic-gradient(transparent 0 calc(1turn / ${fractionDenominator} - 2deg), #334155 calc(1turn / ${fractionDenominator} - 2deg) calc(1turn / ${fractionDenominator})), conic-gradient(rgb(var(--color-primary)) 0 ${fractionNumerator / fractionDenominator}turn, white 0 1turn);`}
 						></div>
 					</div>
 				{:else if currentProblem.op === 'time'}
@@ -456,6 +319,7 @@
 							on:keydown={handleKeydown}
 							type="text"
 							inputmode="numeric"
+							aria-label="Your answer"
 							placeholder="?"
 							disabled={feedback !== null}
 							class="focus:border-primary w-48 rounded-2xl border-4 border-slate-200 py-4 text-center text-5xl font-black focus:outline-none disabled:opacity-50"
