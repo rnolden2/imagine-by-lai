@@ -5,7 +5,7 @@ import { env } from '$env/dynamic/private';
 import { error, type RequestEvent } from '@sveltejs/kit';
 import { getSupabase } from '$lib/server/db';
 import { checkResult, rpc } from './common';
-import { requireWorkerConfig } from './generation';
+import { enqueueGeneration, requireWorkerConfig } from './generation';
 const tasks = new CloudTasksClient();
 const auth = new OAuth2Client();
 export async function verifyWorker(event: RequestEvent) {
@@ -24,24 +24,36 @@ export async function verifyWorker(event: RequestEvent) {
 		error(403, 'Worker authentication failed.');
 	}
 }
-export async function dispatchOutbox() {
+export async function enqueueAndDispatchGeneration(
+	childId: number,
+	favoriteId: string,
+	key: string
+) {
+	const job = await enqueueGeneration(childId, favoriteId, key);
+	try {
+		// Await durable task delivery before responding; generation runs in the worker.
+		await dispatchOutbox(job.id);
+	} catch {
+		// The persisted outbox remains available for scheduled recovery.
+		console.error('word-kitchen.dispatch', { jobId: job.id, failed: true });
+	}
+	return job;
+}
+export async function dispatchOutbox(jobId?: string) {
 	requireWorkerConfig();
 	const db = await getSupabase();
+	let query = db.from('game_outbox').select('*').is('delivered_at', null);
+	if (jobId) query = query.eq('job_id', jobId);
 	const rows =
-		checkResult(
-			await db
-				.from('game_outbox')
-				.select('*')
-				.is('delivered_at', null)
-				.lte('next_attempt_at', new Date().toISOString())
-				.limit(50)
-		) ?? [];
+		checkResult(await query.order('next_attempt_at', { ascending: true }).limit(50)) ?? [];
 	for (const row of rows) {
 		try {
 			await tasks.createTask({
 				parent: env.WORD_KITCHEN_TASK_QUEUE,
 				task: {
 					name: `${env.WORD_KITCHEN_TASK_QUEUE}/tasks/wk-${row.id}`,
+					// Hand delayed retries to Cloud Tasks now, so they do not wait for recovery.
+					scheduleTime: { seconds: Math.ceil(new Date(row.next_attempt_at).getTime() / 1000) },
 					dispatchDeadline: { seconds: 300 },
 					httpRequest: {
 						httpMethod: 'POST',
@@ -72,5 +84,5 @@ export async function dispatchOutbox() {
 export async function reconcile() {
 	await rpc('wk_reconcile_jobs', {});
 	await dispatchOutbox();
- await collectAssets();
+	await collectAssets();
 }

@@ -24,6 +24,7 @@ export default defineConfig({
 		reuseExistingServer: false,
 		env: {
 			WORD_KITCHEN_BROWSER_TEST: '1',
+			WORD_KITCHEN_BROWSER_QUOTA_TEST: '1',
 			HOST: 'localhost',
 			PORT: '4176',
 			ORIGIN: 'http://localhost:4176',

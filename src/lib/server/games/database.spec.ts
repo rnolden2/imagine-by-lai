@@ -180,6 +180,40 @@ it('serializes generation and reserves money once before paid calls', async () =
 	await rpc('wk_cancel_job', [id]);
 	expect(await rpc('wk_claim_job', [id])).toBeNull();
 });
+it('recovers a five-hour-old queued job but expires jobs beyond six hours', async () => {
+	const id = randomUUID();
+	const job = await rpc<{ id: string; deadline: string; created_at: string }>('wk_enqueue_job', [
+		id,
+		1,
+		randomUUID(),
+		'recovery',
+		{},
+		5
+	]);
+	expect(Date.parse(job.deadline) - Date.parse(job.created_at)).toBe(6 * 60 * 60 * 1000);
+	await db.query(
+		`update game_generation_jobs set created_at=now()-interval '5 hours',updated_at=now()-interval '5 hours',deadline=now()+interval '1 hour' where id=$1`,
+		[id]
+	);
+	await rpc('wk_reconcile_jobs', []);
+	const recovered = await rpc<{ id: string; lease_token: number }>('wk_claim_job', [id]);
+	expect(recovered.id).toBe(id);
+	const outbox = await db.query(
+		`select id from game_outbox where job_id=$1 and logical_key like '%:recover:%'`,
+		[id]
+	);
+	expect(outbox.rows).toHaveLength(1);
+	await db.query(
+		`update game_generation_jobs set deadline=now()-interval '1 second',lease_expires_at=null where id=$1`,
+		[id]
+	);
+	await rpc('wk_reconcile_jobs', []);
+	expect(await rpc('wk_claim_job', [id])).toBeNull();
+	const expired = await db.query(`select status,error_code from game_generation_jobs where id=$1`, [
+		id
+	]);
+	expect(expired.rows[0]).toEqual({ status: 'failed', error_code: 'DEADLINE_EXCEEDED' });
+});
 it('preference changes invalidate an in-progress session', async () => {
 	const { id } = await start();
 	await rpc('wk_save_settings', [1, { excludedFoodConceptIds: ['dairy'] }, 0]);

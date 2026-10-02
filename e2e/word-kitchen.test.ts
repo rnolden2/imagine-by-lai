@@ -5,6 +5,25 @@ async function login(page: Page) {
 	await page.getByRole('button', { name: /unlock|login|sign in/i }).click();
 	await page.waitForURL('**/settings');
 }
+test('admin resets the daily allowance while preserving generation history', async ({ page, request }) => {
+	const action = { action: 'reset_generation_limit', key: crypto.randomUUID() };
+	expect((await request.post('/api/settings/games', { data: action })).status()).toBe(403);
+	await login(page);
+	expect((await page.request.post('/api/settings/games', {
+		headers: { origin: 'https://untrusted.example' }, data: action
+	})).status()).toBe(403);
+	await page.goto('/settings/games');
+	const allowance = page.getByRole('region', { name: 'Daily game generation' });
+	await expect(allowance).toContainText('0 of 5 game starts remaining');
+	await allowance.getByRole('button', { name: 'Reset daily game allowance' }).click();
+	await expect(allowance).toContainText('5 of 5 game starts remaining');
+	await expect(allowance).toContainText('Daily game allowance reset.');
+	await expect(allowance.getByRole('button')).toBeDisabled();
+	await page.goto('/settings/games/word-kitchen/recipes');
+	await expect(page.getByRole('region', { name: 'Daily game generation' })).toContainText('5 of 5 game starts remaining');
+	await expect(page.getByRole('link').filter({ hasText: 'Quota fixture' })).toHaveCount(5);
+});
+
 test('requires parent permission to unlock child games and rejects cross-origin writes', async ({
 	page,
 	request

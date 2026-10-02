@@ -63,7 +63,11 @@
 				{data.job.checkpoint.plan?.reason ||
 					'Check the favorite name and food preferences, then start a new game from the parent kitchen.'}
 			</p>{/if}{#if data.job.error_code}<p class="mt-4 text-sm">
-				Status detail: {data.job.error_code.replaceAll('_', ' ').toLowerCase()}
+				{data.job.error_code === 'AI_PROVIDERS_FAILED'
+					? 'Both OpenAI and Gemini could not complete this request. Check provider billing and availability before creating a new game.'
+					: data.job.error_code === 'AI_REQUEST_REFUSED'
+						? 'The AI provider declined this request. Review the favorite food and try a different description.'
+						: `Status detail: ${data.job.error_code.replaceAll('_', ' ').toLowerCase()}`}
 			</p>{/if}
 		<p class="mt-5 text-slate-600">
 			Reserved generation allowance: ${Number(data.job.estimated_cost).toFixed(2)}. This is an

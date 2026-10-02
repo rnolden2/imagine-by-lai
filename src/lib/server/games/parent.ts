@@ -1,39 +1,51 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { getSupabase } from '$lib/server/db';
-import { checkResult, requireParent } from './common';
+import { checkResult, requireParent, rpc } from './common';
+import { generationPolicy } from './generation';
+import type { GenerationQuota } from '$lib/games/word-kitchen/generation-quota';
 import { learningContext } from './learning-context';
 import { recipeProgress } from '$lib/games/word-kitchen/progress';
 import { concepts } from './curated';
 export async function parentData(event: RequestEvent) {
 	requireParent(event);
 	const db = await getSupabase();
-	const [children, favorites, jobs, recipes, attempts, rewards, devices, sessions] =
-		await Promise.all([
-			db.from('child_profiles').select('id,name,grade').order('id'),
-			db.from('game_favorite_foods').select('*').order('created_at'),
-			db
-				.from('game_generation_jobs')
-				.select(
-					'id,child_id,status,stage,error_code,recipe_id,created_at,input,estimated_cost,actual_cost'
-				)
-				.order('created_at', { ascending: false })
-				.limit(50),
-			db
-				.from('game_recipe_revisions')
-				.select('id,recipe_id,definition,checksum,status,preference_revision')
-				.order('created_at', { ascending: false })
-				.limit(100),
-			db.from('game_attempts').select('*').order('created_at', { ascending: false }).limit(2000),
-			db.from('game_reward_ledger').select('child_id,points'),
-			db.from('game_devices').select('id,child_ids,expires_at,revoked_at').is('revoked_at', null),
-			db
-				.from('game_sessions')
-				.select('id,child_id,recipe_revision_id,created_at,state,snapshot')
-				.eq('status', 'completed')
-				.eq('preview', false)
-				.order('created_at', { ascending: false })
-				.limit(100)
-		]);
+	const [
+		children,
+		favorites,
+		jobs,
+		recipes,
+		attempts,
+		rewards,
+		devices,
+		sessions,
+		generationQuota
+	] = await Promise.all([
+		db.from('child_profiles').select('id,name,grade').order('id'),
+		db.from('game_favorite_foods').select('*').order('created_at'),
+		db
+			.from('game_generation_jobs')
+			.select(
+				'id,child_id,status,stage,error_code,recipe_id,created_at,input,estimated_cost,actual_cost'
+			)
+			.order('created_at', { ascending: false })
+			.limit(50),
+		db
+			.from('game_recipe_revisions')
+			.select('id,recipe_id,definition,checksum,status,preference_revision')
+			.order('created_at', { ascending: false })
+			.limit(100),
+		db.from('game_attempts').select('*').order('created_at', { ascending: false }).limit(2000),
+		db.from('game_reward_ledger').select('child_id,points'),
+		db.from('game_devices').select('id,child_ids,expires_at,revoked_at').is('revoked_at', null),
+		db
+			.from('game_sessions')
+			.select('id,child_id,recipe_revision_id,created_at,state,snapshot')
+			.eq('status', 'completed')
+			.eq('preview', false)
+			.order('created_at', { ascending: false })
+			.limit(100),
+		rpc<GenerationQuota>('wk_generation_quota', { p_daily: generationPolicy.dailyJobs })
+	]);
 	const profiles = await Promise.all(
 		(checkResult(children) ?? []).map(async (c) => {
 			const context = await learningContext(Number(c.id));
@@ -82,6 +94,7 @@ export async function parentData(event: RequestEvent) {
 		})
 	);
 	return {
+		generationQuota,
 		profiles,
 		favorites: checkResult(favorites) ?? [],
 		jobs: checkResult(jobs) ?? [],

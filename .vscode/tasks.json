@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Cloud: deploy Imagine",
+      "type": "shell",
+      "command": "npm run deploy",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Cloud: inspect project defaults",
+      "type": "shell",
+      "command": "npm run cloud -- config list --format=json",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

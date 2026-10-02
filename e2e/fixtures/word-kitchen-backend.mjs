@@ -6,6 +6,13 @@ if (process.env.WORD_KITCHEN_BROWSER_TEST !== '1')
 	throw new Error('Browser fixture requires test runner.');
 process.env.GCS_BUCKET_NAME = '';
 export const db = await createTestDatabase();
+if (process.env.WORD_KITCHEN_BROWSER_QUOTA_TEST === '1') {
+	// Exhaust the daily allowance without making paid provider requests.
+	await db.exec(`insert into game_generation_jobs(id,child_id,idempotency_key,request_hash,input,status)
+	 select gen_random_uuid(),1,gen_random_uuid(),'quota-fixture',
+	 jsonb_build_object('favoriteName','Quota fixture '||n),'failed'
+	 from generate_series(1,5) n;`);
+}
 const seed = JSON.parse(await fs.readFile('resources/word-kitchen/seed.json', 'utf8'));
 for (const c of seed.concepts)
 	await db.query('insert into kitchen_concepts(id,kind,label,tags)values($1,$2,$3,$4)', [

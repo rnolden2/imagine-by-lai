@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GenerationAllowance from '$lib/games/word-kitchen/GenerationAllowance.svelte';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
 </script>
@@ -11,6 +12,7 @@
 		Generate a recipe from a favorite food in the parent kitchen. Every generated recipe needs your
 		review.
 	</p>
+	<GenerationAllowance quota={data.generationQuota} />
 	<h2 class="text-2xl font-bold">Generation jobs</h2>
 	{#each data.jobs as job}<a
 			class="my-3 block rounded-xl bg-white p-5 shadow-sm"

@@ -280,7 +280,7 @@ export async function runGeneration(jobId: string) {
 						else strict(value);
 				};
 				strict(schema);
-				job.checkpoint.plan = planSchema.parse(await withHeartbeat(job,()=>generateGamePlan(prompt, schema)));
+				job.checkpoint.plan = planSchema.parse(await withHeartbeat(job,()=>generateGamePlan(prompt, schema, { beforeFallback: () => reserve(job, 'planning:gemini', generationPolicy.textReservation) })));
 				if (!job.checkpoint.plan.supported) {
 					await checkpoint(job, 'planning', 'needs_parent_input', 'UNSUPPORTED_FAVORITE');
 					return;
@@ -334,15 +334,17 @@ export async function runGeneration(jobId: string) {
 								.eq('id', requirement.conceptId)
 								.single()
 						);
+						let assetProvider = env.AI_PROVIDER ?? 'openai';
 						const bytes = await withHeartbeat(job,()=>generateGameImage(
 							assetPrompt(concept!.label, requirement.state),
-							!requirement.conceptId.startsWith('environment:')
+							!requirement.conceptId.startsWith('environment:'),
+							{ beforeFallback: () => reserve(job, `asset:${identity.id}:gemini`, generationPolicy.imageReservation), onProvider: (provider) => { assetProvider = provider; } }
 						),{id:identity.id,token:lease.lease_token});
 						revisionId = await publishGeneratedAsset(
 							identity.id,
 							lease.lease_token,
 							bytes,
-							{ jobId: job.id, provider: env.AI_PROVIDER ?? 'openai' },
+							{ jobId: job.id, provider: assetProvider },
 							requirement.conceptId.startsWith('environment:')
 						);
 						job.checkpoint.newAssets = (job.checkpoint.newAssets ?? 0) + 1;
@@ -387,7 +389,7 @@ export async function runGeneration(jobId: string) {
 			parentCodes.includes(code) ||
 			code.includes('BUDGET') ||
 			code === 'UNCERTAIN_PROVIDER_RESULT' ||
-			code === 'ASSET_LIMIT'||code==='PROVIDER_CREDITS_EXHAUSTED'||code==='STALE_LEASE';
+			['AI_PROVIDERS_FAILED', 'AI_GENERATION_TIMEOUT', 'AI_REQUEST_REFUSED'].includes(code)||code === 'ASSET_LIMIT'||code==='PROVIDER_CREDITS_EXHAUSTED'||code==='STALE_LEASE';
 		console.error('word-kitchen.generation', {
 			jobId: job.id,
 			stage: job.stage,

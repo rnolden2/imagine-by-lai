@@ -4,6 +4,9 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
+		"cloud": "node scripts/with-google-cloud.mjs gcloud",
+		"deploy": "node scripts/with-google-cloud.mjs gcloud builds submit --config cloudbuild.yaml .",
+		"kitchen:infrastructure": "node scripts/with-google-cloud.mjs node scripts/word-kitchen/setup-infrastructure.mjs",
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",

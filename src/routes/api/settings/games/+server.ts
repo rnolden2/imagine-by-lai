@@ -12,11 +12,13 @@ import {
 	checkResult
 } from '$lib/server/games/common';
 import { authorizeDevice, requireChild } from '$lib/server/games/authorization';
-import { enqueueGeneration } from '$lib/server/games/generation';
+import { enqueueAndDispatchGeneration } from '$lib/server/games/queue';
+import { generationPolicy } from '$lib/server/games/generation';
 import { normalizeAnswer } from '$lib/games/word-kitchen/engine';
 import type { RequestHandler } from './$types';
 const uuid = z.string().uuid();
 const schema = z.discriminatedUnion('action', [
+	z.object({ action: z.literal('reset_generation_limit'), key: uuid }),
  z.object({action:z.literal('revise'),revisionId:uuid,checksum:z.string().length(64),title:z.string().trim().min(1).max(80),description:z.string().trim().min(1).max(400),definitions:z.array(z.object({id:z.string().max(100),definition:z.string().trim().min(1).max(240)})).max(10)}),
 	z.object({ action: z.literal('settings'), childId: childIdSchema, settings: settingsSchema }),
 	z.object({ action: z.literal('unlock'), childIds: z.array(childIdSchema).min(1).max(50) }),
@@ -50,6 +52,11 @@ export const POST: RequestHandler = async (e) => {
 	const db = await getSupabase();
 	if ('childId' in b) await requireChild(e, b.childId);
 	switch (b.action) {
+		case 'reset_generation_limit':
+			return json(await rpc('wk_reset_generation_limit', {
+				p_id: b.key,
+				p_daily: generationPolicy.dailyJobs
+			}));
  case 'revise':return json(await reviseRecipe(b.revisionId,b.checksum,b.title,b.description,b.definitions));
 		case 'settings':
 			return json(
@@ -83,7 +90,7 @@ export const POST: RequestHandler = async (e) => {
 			checkResult(await db.from('game_favorite_foods').delete().eq('id', b.id));
 			break;
 		case 'generate':
-			return json(await enqueueGeneration(b.childId, b.favoriteId, b.key), { status: 202 });
+			return json(await enqueueAndDispatchGeneration(b.childId, b.favoriteId, b.key), { status: 202 });
 		case 'cancel':
 			await rpc('wk_cancel_job', { p_id: b.jobId });
 			break;

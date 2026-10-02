@@ -6,10 +6,11 @@ const workerUrl=process.env.WORD_KITCHEN_WORKER_URL;
 const workerEmail=`word-kitchen-worker@${project}.iam.gserviceaccount.com`;
 const runtimeEmail=process.env.WORD_KITCHEN_RUNTIME_SERVICE_ACCOUNT;
 const apply=process.argv.includes('--apply');
+const schedule='every 5 hours';
 const queue=`projects/${project}/locations/${region}/queues/word-kitchen`;
 if(!workerUrl||!runtimeEmail)throw new Error('Set WORD_KITCHEN_WORKER_URL and WORD_KITCHEN_RUNTIME_SERVICE_ACCOUNT.');
 if(new URL(workerUrl).protocol!=='https:')throw new Error('Worker URL must use HTTPS.');
-console.log(JSON.stringify({project,region,workerUrl,workerEmail,runtimeEmail,queue,apply},null,2));
+console.log(JSON.stringify({project,region,workerUrl,workerEmail,runtimeEmail,queue,schedule,apply},null,2));
 if(!apply){console.log('Plan only. Add --apply after deploying and validating the database.');process.exit(0);}
 const auth=new GoogleAuth({scopes:['https://www.googleapis.com/auth/cloud-platform']});const client=await auth.getClient();
 async function request(url,method='GET',data){return(await client.request({url,method,data})).data;}
@@ -26,7 +27,7 @@ if(await optional(queueUrl))await request(`${queueUrl}?updateMask=rateLimits,ret
 else await request(`https://cloudtasks.googleapis.com/v2/projects/${project}/locations/${region}/queues`,'POST',config);
 const schedulerName=`projects/${project}/locations/${region}/jobs/word-kitchen-reconcile`;
 const schedulerUrl=`https://cloudscheduler.googleapis.com/v1/${schedulerName}`;
-const scheduler={name:schedulerName,schedule:'* * * * *',timeZone:'Etc/UTC',attemptDeadline:'180s',httpTarget:{uri:`${workerUrl}/api/internal/word-kitchen/reconcile`,httpMethod:'POST',headers:{'Content-Type':'application/json'},body:Buffer.from('{}').toString('base64'),oidcToken:{serviceAccountEmail:workerEmail,audience:workerUrl}}};
+const scheduler={name:schedulerName,schedule,timeZone:'Etc/UTC',attemptDeadline:'180s',httpTarget:{uri:`${workerUrl}/api/internal/word-kitchen/reconcile`,httpMethod:'POST',headers:{'Content-Type':'application/json'},body:Buffer.from('{}').toString('base64'),oidcToken:{serviceAccountEmail:workerEmail,audience:workerUrl}}};
 if(await optional(schedulerUrl))await request(`${schedulerUrl}?updateMask=schedule,timeZone,httpTarget,attemptDeadline`,'PATCH',scheduler);
 else await request(`https://cloudscheduler.googleapis.com/v1/projects/${project}/locations/${region}/jobs`,'POST',scheduler);
-console.log('Queue and authenticated minute-by-minute reconciler configured. Confirm task delivery and IAM before enabling generation.');
+console.log('Queue and authenticated five-hour recovery reconciler configured. Confirm task delivery and IAM before enabling generation.');

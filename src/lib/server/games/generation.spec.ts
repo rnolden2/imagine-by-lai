@@ -1,9 +1,9 @@
 import { beforeAll,afterAll,it,expect,vi } from 'vitest';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { curatedInputs } from './curated';
-const mocks=vi.hoisted(()=>({plan:vi.fn(),image:vi.fn(),publish:vi.fn(),db:null as ReturnType<typeof createClient>|null}));
+const mocks=vi.hoisted(()=>({plan:vi.fn(),image:vi.fn(),publish:vi.fn(),db:null as SupabaseClient|null}));
 vi.mock('$env/dynamic/private',()=>({env:{WORD_KITCHEN_TASK_QUEUE:'projects/test/locations/test/queues/test',WORD_KITCHEN_WORKER_URL:'https://worker.test',WORD_KITCHEN_WORKER_SERVICE_ACCOUNT:'test@example.iam.gserviceaccount.com'}}));
 vi.mock('$lib/server/db',()=>({getSupabase:async()=>mocks.db}));
 vi.mock('$lib/server/ai',()=>({generateGamePlan:mocks.plan,generateGameImage:mocks.image}));
@@ -32,3 +32,21 @@ it('runs persisted stages, reuses shared assets, fences duplicate workers, and a
 	const approved=await mocks.db!.rpc('wk_approve_recipe',{p_revision:draft.id,p_checksum:draft.checksum,p_child:1,p_preferences:0});expect(approved.error).toBeNull();expect((await mocks.db!.from('game_recipe_assignments').select('*').eq('child_id',1)).data).toHaveLength(1);
 });
 it('cancelling before dispatch performs no provider calls',async()=>{const favorite=(await mocks.db!.from('game_favorite_foods').select('id').single()).data!;const job=await enqueueGeneration(1,favorite.id,randomUUID());await mocks.db!.rpc('wk_cancel_job',{p_id:job.id});await runGeneration(job.id);expect(mocks.plan).toHaveBeenCalledTimes(1);expect((await mocks.db!.from('game_generation_jobs').select('status').eq('id',job.id).single()).data?.status).toBe('cancelled');});
+
+it('reserves fallback spending and records Gemini asset provenance', async () => {
+ const plan = await mocks.plan.mock.results[0].value;
+ mocks.plan.mockImplementation(async (_prompt, _schema, options) => { await options.beforeFallback(); return plan; });
+ mocks.image.mockImplementation(async (_prompt, _transparent, options) => { await options.beforeFallback(); options.onProvider('gemini'); return Buffer.from('test-image'); });
+ const favorite = (await mocks.db!.from('game_favorite_foods').select('id').single()).data!;
+ const job = await enqueueGeneration(1, favorite.id, randomUUID());
+ let status = 'queued';
+ for (let i=0;i<40 && !['failed','needs_parent_input','ready_for_preview'].includes(status);i++) {
+  await runGeneration(job.id);
+  const result=await mocks.db!.from('game_generation_jobs').select('*').eq('id',job.id).single();
+  status=result.data!.status;
+ }
+ expect(status).toBe('ready_for_preview');
+ const costs = await database.query<{ logical_key: string }>('select logical_key from game_cost_reservations where job_id=$1', [job.id]);
+ expect(costs.rows.filter(row => row.logical_key.endsWith(':gemini'))).toHaveLength(2);
+ expect(mocks.publish).toHaveBeenLastCalledWith(expect.any(String), expect.any(Number), expect.any(Buffer), { jobId: job.id, provider: 'gemini' }, false);
+});

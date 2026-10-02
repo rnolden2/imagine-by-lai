@@ -1,0 +1,39 @@
+{
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "terminal.integrated.env.osx": {
+    "CLOUDSDK_CORE_PROJECT": "api-project-371618",
+    "CLOUDSDK_BILLING_QUOTA_PROJECT": "api-project-371618",
+    "CLOUDSDK_RUN_REGION": "us-central1",
+    "CLOUDSDK_BUILDS_REGION": "us-central1",
+    "GOOGLE_CLOUD_PROJECT": "api-project-371618",
+    "GOOGLE_CLOUD_QUOTA_PROJECT": "api-project-371618",
+    "GCS_PROJECT_ID": "api-project-371618",
+    "WORD_KITCHEN_REGION": "us-central1",
+    "WORD_KITCHEN_WORKER_URL": "https://imagine-by-lai-xaoktxu34q-uc.a.run.app",
+    "WORD_KITCHEN_RUNTIME_SERVICE_ACCOUNT": "247644706560-compute@developer.gserviceaccount.com"
+  },
+  "terminal.integrated.env.linux": {
+    "CLOUDSDK_CORE_PROJECT": "api-project-371618",
+    "CLOUDSDK_BILLING_QUOTA_PROJECT": "api-project-371618",
+    "CLOUDSDK_RUN_REGION": "us-central1",
+    "CLOUDSDK_BUILDS_REGION": "us-central1",
+    "GOOGLE_CLOUD_PROJECT": "api-project-371618",
+    "GOOGLE_CLOUD_QUOTA_PROJECT": "api-project-371618",
+    "GCS_PROJECT_ID": "api-project-371618",
+    "WORD_KITCHEN_REGION": "us-central1",
+    "WORD_KITCHEN_WORKER_URL": "https://imagine-by-lai-xaoktxu34q-uc.a.run.app",
+    "WORD_KITCHEN_RUNTIME_SERVICE_ACCOUNT": "247644706560-compute@developer.gserviceaccount.com"
+  },
+  "terminal.integrated.env.windows": {
+    "CLOUDSDK_CORE_PROJECT": "api-project-371618",
+    "CLOUDSDK_BILLING_QUOTA_PROJECT": "api-project-371618",
+    "CLOUDSDK_RUN_REGION": "us-central1",
+    "CLOUDSDK_BUILDS_REGION": "us-central1",
+    "GOOGLE_CLOUD_PROJECT": "api-project-371618",
+    "GOOGLE_CLOUD_QUOTA_PROJECT": "api-project-371618",
+    "GCS_PROJECT_ID": "api-project-371618",
+    "WORD_KITCHEN_REGION": "us-central1",
+    "WORD_KITCHEN_WORKER_URL": "https://imagine-by-lai-xaoktxu34q-uc.a.run.app",
+    "WORD_KITCHEN_RUNTIME_SERVICE_ACCOUNT": "247644706560-compute@developer.gserviceaccount.com"
+  }
+}

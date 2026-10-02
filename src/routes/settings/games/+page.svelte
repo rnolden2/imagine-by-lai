@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invalidateAll, goto } from '$app/navigation';
+	import GenerationAllowance from '$lib/games/word-kitchen/GenerationAllowance.svelte';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
 	let selected = $state(0);
@@ -44,6 +45,7 @@
 			href="/settings/games/word-kitchen/recipes">Recipe reviews & generation</a
 		>
 	</nav>
+	<GenerationAllowance quota={data.generationQuota} />
 	<p role="status" class="my-4">{message}</p>
 	{#if child}<label class="font-bold"
 			>Child <select bind:value={selected} class="ml-3 rounded-xl"
