@@ -37,7 +37,7 @@
 				<a href="{base}/spelling" class="hover:text-primary font-semibold text-gray-600 transition-colors"
 					>Spelling</a
 				>
-				{#if data.gamesEnabled}<a href="{base}/games" class="font-semibold text-teal-800">Games</a>{/if}
+				<a href="{base}/games" class="font-semibold text-teal-800">Games</a>
 				<a href="{base}/login" class="hover:text-primary text-gray-600 transition-colors">
 					Settings 🔒
 				</a>

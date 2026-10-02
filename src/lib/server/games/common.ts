@@ -1,18 +1,10 @@
 import { createHash } from 'node:crypto';
-import { env } from '$env/dynamic/private';
 import { error, type RequestEvent } from '@sveltejs/kit';
 import { getSupabase } from '$lib/server/db';
 import { z } from 'zod';
 
-export const gamesEnabled = () =>
-	env.GAMES_ENABLED === 'true' && env.WORD_KITCHEN_ENABLED === 'true';
-export const generationEnabled = () =>
-	gamesEnabled() && env.WORD_KITCHEN_GENERATION_ENABLED === 'true';
 export const hash = (value: unknown) =>
 	createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export function requireGames() {
-	if (!gamesEnabled()) error(404, 'Games are not available.');
-}
 export function requireParent(event: RequestEvent) {
 	if (!event.locals.user?.isAdmin) error(403, 'Parent access required.');
 }

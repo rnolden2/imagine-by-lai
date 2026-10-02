@@ -1,11 +1,10 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { getSupabase } from '$lib/server/db';
-import { checkResult, requireGames, requireParent, generationEnabled } from './common';
+import { checkResult, requireParent } from './common';
 import { learningContext } from './learning-context';
 import { recipeProgress } from '$lib/games/word-kitchen/progress';
 import { concepts } from './curated';
 export async function parentData(event: RequestEvent) {
-	requireGames();
 	requireParent(event);
 	const db = await getSupabase();
 	const [children, favorites, jobs, recipes, attempts, rewards, devices, sessions] =
@@ -90,7 +89,6 @@ export async function parentData(event: RequestEvent) {
 		devices: checkResult(devices) ?? [],
 		exclusions: concepts
 			.filter((c) => c.kind === 'ingredient')
-			.map((c) => ({ id: c.id, label: c.label })),
-		generationEnabled: generationEnabled()
+			.map((c) => ({ id: c.id, label: c.label }))
 	};
 }

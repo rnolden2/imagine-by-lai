@@ -1,11 +1,10 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
-import { requireGames, requireOrigin, readBody, childIdSchema } from '$lib/server/games/common';
+import { requireOrigin, readBody, childIdSchema } from '$lib/server/games/common';
 import { durationSchema } from '$lib/games/word-kitchen/contracts';
 import { startSession } from '$lib/server/games/sessions';
 import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async (event) => {
-	requireGames();
 	requireOrigin(event);
 	const b = await readBody(
 		event,

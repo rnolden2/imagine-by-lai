@@ -1,4 +1,4 @@
-import { gamesEnabled,rpc } from '$lib/server/games/common';
+import { rpc } from '$lib/server/games/common';
 import { saveMathSettings, clearMathStats } from '$lib/server/math-settings';
 import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
 import { fail, isRedirect, redirect, error as kitError } from '@sveltejs/kit';
@@ -481,11 +481,7 @@ export const actions: Actions = {
 	clearSpellingStats: async ({ request }) => {
 		const data = await request.formData();
 		const grade = data.get('grade');
-		const supabase = await getSupabase();
-		if(gamesEnabled()){await rpc('wk_clear_spelling_history',{p_grade:grade?String(grade):null});return{success:true};}
-		const query = supabase.from('spelling_attempts').delete();
-		const { error } = grade ? await query.eq('grade', String(grade)) : await query.neq('id', 0);
-		if (error) throw error;
+		await rpc('wk_clear_spelling_history', { p_grade: grade ? String(grade) : null });
 		return { success: true };
 	},
 

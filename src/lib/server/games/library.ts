@@ -1,14 +1,13 @@
 import { getSupabase } from '$lib/server/db';
 import { validateRecipe, grades } from '$lib/games/word-kitchen/contracts';
 import { access } from './authorization';
-import { checkResult, requireGames } from './common';
+import { checkResult } from './common';
 import { learningContext } from './learning-context';
 import { compatible } from './sessions';
 import { deliveryManifest } from './assets';
 import type { RequestEvent } from '@sveltejs/kit';
 
 export async function library(event: RequestEvent) {
-	requireGames();
 	const scope = await access(event);
 	const db = await getSupabase();
 	const children =

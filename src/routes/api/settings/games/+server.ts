@@ -6,7 +6,6 @@ import { settingsSchema } from '$lib/games/word-kitchen/contracts';
 import {
 	requireParent,
 	requireOrigin,
-	requireGames,
 	readBody,
 	childIdSchema,
 	rpc,
@@ -45,7 +44,6 @@ const schema = z.discriminatedUnion('action', [
 	})
 ]);
 export const POST: RequestHandler = async (e) => {
-	requireGames();
 	requireParent(e);
 	requireOrigin(e);
 	const b = await readBody(e, schema);

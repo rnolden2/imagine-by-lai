@@ -8,7 +8,7 @@ import { vocabularySchema, validateRecipe, type Recipe } from '$lib/games/word-k
 import { buildRecipe, concepts, conceptMap, stableId } from './curated';
 import { learningContext } from './learning-context';
 import { compatible } from './sessions';
-import { generationEnabled, checkResult, rpc, hash } from './common';
+import { checkResult, rpc, hash } from './common';
 import { publishGeneratedAsset } from './assets';
 
 const ingredient = z
@@ -98,7 +98,6 @@ export function requireWorkerConfig() {
 		if (!env[key]) error(503, 'Game generation is not configured yet.');
 }
 export async function enqueueGeneration(childId: number, favoriteId: string, key: string) {
-	if (!generationEnabled()) error(503, 'New game generation is disabled.');
 	requireWorkerConfig();
 	const db = await getSupabase();
 	const favorite = checkResult(
@@ -253,7 +252,6 @@ async function withHeartbeat<T>(job:Job,work:()=>Promise<T>,asset?:{id:string;to
  try{const result=await work();if(lost)throw new Error('STALE_LEASE');return result;}finally{clearInterval(timer);}
 }
 export async function runGeneration(jobId: string) {
-	if (!generationEnabled()) return;
 	const job = await rpc<Job | null>('wk_claim_job', { p_id: jobId });
 	if (!job) return;
 	const db = await getSupabase();

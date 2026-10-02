@@ -1,9 +1,8 @@
 import { error } from '@sveltejs/kit';
 import { getSupabase } from '$lib/server/db';
-import { requireGames, requireParent, checkResult } from '$lib/server/games/common';
+import { requireParent, checkResult } from '$lib/server/games/common';
 import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async (e) => {
-	requireGames();
 	requireParent(e);
 	const db = await getSupabase();
 	const job = checkResult(

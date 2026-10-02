@@ -3,13 +3,12 @@ import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 import { Storage } from '@google-cloud/storage';
 import { z } from 'zod';
 import { GCS_BUCKET_NAME } from '$lib/server/secrets';
-import { requireGames, requireOrigin, readBody, hash, limit } from '$lib/server/games/common';
+import { requireOrigin, readBody, hash, limit } from '$lib/server/games/common';
 import { sessionRow } from '$lib/server/games/sessions';
 import type { RequestHandler } from './$types';
 const tts = new TextToSpeechClient();
 const storage = new Storage();
 export const POST: RequestHandler = async (e) => {
-	requireGames();
 	requireOrigin(e);
 	const row = await sessionRow(e, e.params.sessionId);
 	const b = await readBody(

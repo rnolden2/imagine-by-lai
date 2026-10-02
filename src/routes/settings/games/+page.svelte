@@ -149,7 +149,7 @@
 						class="mt-4 flex flex-wrap items-center gap-3 border-t pt-4"
 					>
 						<strong class="mr-auto">{food.display_name}</strong><button
-							disabled={busy || !data.generationEnabled}
+							disabled={busy}
 							onclick={() =>
 								act({
 									action: 'generate',
@@ -161,9 +161,7 @@
 						><button disabled={busy} onclick={() => act({ action: 'remove_favorite', id: food.id })}
 							>Remove</button
 						>
-					</div>{/each}{#if !data.generationEnabled}<p class="mt-4 text-sm">
-						New game generation is currently disabled.
-					</p>{/if}
+					</div>{/each}
 			</section>
 			<section class="rounded-3xl bg-white p-6 shadow-sm">
 				<h2 class="text-2xl font-bold">Device access</h2>

@@ -1,11 +1,10 @@
 import { error } from '@sveltejs/kit';
 import { getSupabase } from '$lib/server/db';
-import { requireGames, requireParent, checkResult } from '$lib/server/games/common';
+import { requireParent, checkResult } from '$lib/server/games/common';
 import { deliveryManifest } from '$lib/server/games/assets';
 import { validateRecipe } from '$lib/games/word-kitchen/contracts';
 import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async (e) => {
-	requireGames();
 	requireParent(e);
 	const db = await getSupabase();
 	const revision = checkResult(

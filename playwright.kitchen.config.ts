@@ -29,10 +29,7 @@ export default defineConfig({
 			ORIGIN: 'http://localhost:4176',
 			ADMIN_PASSWORD: 'kitchen-browser-test-password',
 			SUPABASE_URL: 'https://kitchen-tests.supabase.co',
-			SUPABASE_SERVICE_ROLE_KEY: 'kitchen-browser-test-server-key-never-use-in-production',
-			GAMES_ENABLED: 'true',
-			WORD_KITCHEN_ENABLED: 'true',
-			WORD_KITCHEN_GENERATION_ENABLED: 'false'
+			SUPABASE_SERVICE_ROLE_KEY: 'kitchen-browser-test-server-key-never-use-in-production'
 		}
 	}
 });

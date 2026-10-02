@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { curatedInputs } from './curated';
 const mocks=vi.hoisted(()=>({plan:vi.fn(),image:vi.fn(),publish:vi.fn(),db:null as ReturnType<typeof createClient>|null}));
-vi.mock('$env/dynamic/private',()=>({env:{GAMES_ENABLED:'true',WORD_KITCHEN_ENABLED:'true',WORD_KITCHEN_GENERATION_ENABLED:'true',WORD_KITCHEN_TASK_QUEUE:'projects/test/locations/test/queues/test',WORD_KITCHEN_WORKER_URL:'https://worker.test',WORD_KITCHEN_WORKER_SERVICE_ACCOUNT:'test@example.iam.gserviceaccount.com'}}));
+vi.mock('$env/dynamic/private',()=>({env:{WORD_KITCHEN_TASK_QUEUE:'projects/test/locations/test/queues/test',WORD_KITCHEN_WORKER_URL:'https://worker.test',WORD_KITCHEN_WORKER_SERVICE_ACCOUNT:'test@example.iam.gserviceaccount.com'}}));
 vi.mock('$lib/server/db',()=>({getSupabase:async()=>mocks.db}));
 vi.mock('$lib/server/ai',()=>({generateGamePlan:mocks.plan,generateGameImage:mocks.image}));
 vi.mock('./assets',()=>({publishGeneratedAsset:mocks.publish,deliveryManifest:vi.fn()}));

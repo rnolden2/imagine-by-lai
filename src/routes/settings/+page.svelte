@@ -73,7 +73,9 @@
 		<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
 			<div>
 				<h1 class="text-3xl font-black text-slate-900">Admin Dashboard</h1>
- {#if data.gamesEnabled}<a href="/settings/games" class="mt-3 inline-block font-bold text-teal-800">Game settings & parent kitchen →</a>{/if}
+				<a href="/settings/games" class="mt-3 inline-block font-bold text-teal-800"
+					>Game settings & parent kitchen →</a
+				>
 				<p class="text-sm font-semibold text-slate-500">
 					Profiles, practice settings, lists, and health.
 				</p>
