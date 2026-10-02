@@ -14,7 +14,6 @@ node_modules
 Thumbs.db
 
 # Env
-.env
 .env.local
 # .envdo 
 # Vite
@@ -39,3 +38,12 @@ src/lib/server/api-project.json
 skills-lock.json
 
 
+deploy/cloud-run-service.yaml
+skaffold.yaml
+
+# Static Assets
+static/
+
+# Supabase
+supabase/
+cloudbuild.yaml
