@@ -2,7 +2,7 @@ import type { Actions } from './$types';
 import { fail, redirect, isRedirect, error as kitError } from '@sveltejs/kit';
 import { GCS_BUCKET_NAME } from '$lib/server/secrets';
 import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
-import { generateStoryText, getGeminiImageModel } from '$lib/server/ai';
+import { generateStoryText, generateStoryImage } from '$lib/server/ai';
 import type { PageServerLoad } from './$types';
 import type { User, Story } from '$lib/types';
 import { uploadStoryImage } from '$lib/server/image-storage';
@@ -342,31 +342,15 @@ export const actions: Actions = {
 
 		// 2. Generate and upload the image (non-blocking - story will be saved even if this fails)
 		try {
-			const imageGenModel = await getGeminiImageModel();
 			const fullImagePrompt = generateImagePrompt(imagePromptText, user);
 
 			console.log('Generating story illustration...');
 
-			const imageResponse = await withTimeout(
-				imageGenModel.generateContent(fullImagePrompt),
+			const imageBuffer = await withTimeout(
+				generateStoryImage(fullImagePrompt),
 				90000, // 90 second timeout for image generation
 				'Image generation timed out'
 			);
-
-			let imageBuffer: Buffer | null = null;
-
-			// Extract image data from response
-			for (const part of imageResponse.response.candidates?.[0].content.parts || []) {
-				if (part.inlineData) {
-					const imageData = part.inlineData.data;
-					imageBuffer = Buffer.from(imageData, 'base64');
-					break;
-				}
-			}
-
-			if (!imageBuffer) {
-				throw new ImageGenerationError('No image data found in API response');
-			}
 
 			const storedImage = await withTimeout(
 				uploadStoryImage(imageBuffer),

@@ -43,9 +43,10 @@
 	}
 
 	function resolveSettings(userId: number, grade: string): Settings {
+		console.log('Resolving settings for userId:', userId, 'grade:', grade);
 		return resolveMathSettings(
 			grade,
-			data.mathSettings.find((setting) => (setting.child_id ?? setting.user_id) === userId)
+			data.mathSettings.find((setting) => Number(setting.child_id ?? setting.user_id) === Number(userId))
 		);
 	}
 
@@ -60,7 +61,7 @@
 		if (!user) return;
 		const next = resolveMathSettings(
 			user.grade,
-			mathSettings.find((setting) => (setting.child_id ?? setting.user_id) === user.id)
+			mathSettings.find((setting) => Number(setting.child_id ?? setting.user_id) === Number(user.id))
 		);
 		// Background refreshes must not interrupt an answer unless the settings changed.
 		if (JSON.stringify(next) === JSON.stringify(currentSettings)) return;

@@ -8,6 +8,7 @@ vi.mock('$lib/math-settings-sync', () => ({ watchMathSettings: () => () => {} })
 
 const data = {
 	user: undefined,
+ gamesEnabled: false,
 	users: [
 		{
 			id: 1,

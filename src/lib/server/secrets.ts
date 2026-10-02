@@ -10,8 +10,8 @@ export const GCS_PROJECT_ID =
 	privateEnv.GCS_PROJECT_ID ?? privateEnv.GOOGLE_CLOUD_PROJECT ?? DEFAULT_GCP_PROJECT_ID;
 export const ADMIN_PASSWORD = privateEnv.ADMIN_PASSWORD ?? '';
 
+const OPENAI_API_KEY_SECRET_NAME = privateEnv.OPENAI_API_KEY_SECRET_NAME ?? 'openAI_api_key';
 const GEMINI_API_KEY_SECRET_NAME = privateEnv.GEMINI_API_KEY_SECRET_NAME ?? 'gemini_api';
-const OPENAI_API_KEY_SECRET_NAME = privateEnv.OPENAI_API_KEY_SECRET_NAME ?? 'openai_api_key';
 const SUPABASE_URL_SECRET_NAME = privateEnv.SUPABASE_URL_SECRET_NAME ?? 'supabase_url';
 const SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME =
 	privateEnv.SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME ?? 'supabase_service_role_key';
@@ -46,12 +46,12 @@ async function getConfiguredSecret(
 	return getSecretValue(secretName);
 }
 
-export async function getGeminiApiKey(): Promise<string> {
-	return getConfiguredSecret(privateEnv.GEMINI_API_KEY, GEMINI_API_KEY_SECRET_NAME);
-}
-
 export async function getOpenAIApiKey(): Promise<string> {
 	return getConfiguredSecret(privateEnv.OPENAI_API_KEY, OPENAI_API_KEY_SECRET_NAME);
+}
+
+export async function getGeminiApiKey(): Promise<string> {
+	return getConfiguredSecret(privateEnv.GEMINI_API_KEY, GEMINI_API_KEY_SECRET_NAME);
 }
 
 export async function getSupabaseUrl(): Promise<string> {

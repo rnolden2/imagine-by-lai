@@ -1,3 +1,4 @@
+import { gamesEnabled,rpc } from '$lib/server/games/common';
 import { saveMathSettings, clearMathStats } from '$lib/server/math-settings';
 import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
 import { fail, isRedirect, redirect, error as kitError } from '@sveltejs/kit';
@@ -12,7 +13,7 @@ import type {
 	User
 } from '$lib/types';
 import { GCS_BUCKET_NAME } from '$lib/server/secrets';
-import { getGeminiImageModel } from '$lib/server/ai';
+import { generateStoryImage, generateStoryText } from '$lib/server/ai';
 import {
 	downloadImageFromGcsUrl,
 	deleteStoryImageObject,
@@ -98,7 +99,6 @@ async function generateAndUploadStoryImage(story: Story): Promise<{
 	imageUrl: string;
 	imageObjectName: string;
 }> {
-	const model = await getGeminiImageModel();
 	const storyExcerpt = story.content.replace(/\s+/g, ' ').trim().slice(0, 1200);
 	const prompt = [
 		'Create a warm, colorful children storybook illustration.',
@@ -110,20 +110,7 @@ async function generateAndUploadStoryImage(story: Story): Promise<{
 		.filter(Boolean)
 		.join('\n');
 
-	const imageResponse = await model.generateContent(prompt);
-	let imageBuffer: Buffer | null = null;
-
-	for (const part of imageResponse.response.candidates?.[0]?.content.parts ?? []) {
-		if (part.inlineData?.data) {
-			imageBuffer = Buffer.from(part.inlineData.data, 'base64');
-			break;
-		}
-	}
-
-	if (!imageBuffer) {
-		throw new Error('Image generation returned no image data.');
-	}
-
+	const imageBuffer = await generateStoryImage(prompt);
 	const storedImage = await uploadStoryImage(imageBuffer);
 	return {
 		imageUrl: storedImage.url,
@@ -495,6 +482,7 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const grade = data.get('grade');
 		const supabase = await getSupabase();
+		if(gamesEnabled()){await rpc('wk_clear_spelling_history',{p_grade:grade?String(grade):null});return{success:true};}
 		const query = supabase.from('spelling_attempts').delete();
 		const { error } = grade ? await query.eq('grade', String(grade)) : await query.neq('id', 0);
 		if (error) throw error;
@@ -515,18 +503,9 @@ export const actions: Actions = {
 		}
 
 		try {
-			const model = await getGeminiImageModel();
 			const { buffer: imageBuffer } = await downloadImageFromGcsUrl(imageUrl);
-
-			const imagePart = {
-				inlineData: {
-					data: imageBuffer.toString('base64'),
-					mimeType: 'image/png'
-				}
-			};
 			const completePrompt = `Create a short, exciting, and creative story for a young reader based on the following idea: "${prompt}". The story should be about 5 minutes to read and include a positive life lesson. At the very beginning, on a new line, write a short, simple sentence describing the main scene for an illustration.`;
-			const result = await model.generateContent([completePrompt, imagePart]);
-			const storyContent = result.response.text();
+			const storyContent = await generateStoryText(completePrompt, imageBuffer);
 			const supabase = await getSupabase();
 			const { data: story, error } = await supabase
 				.from('stories')

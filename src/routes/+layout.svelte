@@ -28,15 +28,16 @@
 
 <div class="min-h-screen bg-gray-50">
 	<header class="bg-white shadow-sm">
-		<nav class="container mx-auto flex items-center justify-between px-4 py-3">
+		<nav class="container mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3">
 			<a href="{base}/" class="text-primary text-xl font-bold">Imaginations By Lai</a>
-			<div class="flex items-center gap-4">
+			<div class="flex flex-wrap items-center gap-4">
 				<a href="{base}/math" class="hover:text-primary font-semibold text-gray-600 transition-colors"
 					>Math</a
 				>
 				<a href="{base}/spelling" class="hover:text-primary font-semibold text-gray-600 transition-colors"
 					>Spelling</a
 				>
+				{#if data.gamesEnabled}<a href="{base}/games" class="font-semibold text-teal-800">Games</a>{/if}
 				<a href="{base}/login" class="hover:text-primary text-gray-600 transition-colors">
 					Settings 🔒
 				</a>
