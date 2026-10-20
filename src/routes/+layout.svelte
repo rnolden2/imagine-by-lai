@@ -31,13 +31,16 @@
 		<nav class="container mx-auto flex flex-wrap items-center justify-between gap-3 px-4 py-3">
 			<a href="{base}/" class="text-primary text-xl font-bold">Imaginations By Lai</a>
 			<div class="flex flex-wrap items-center gap-4">
-				<a href="{base}/math" class="hover:text-primary font-semibold text-gray-600 transition-colors"
-					>Math</a
+				<a
+					href="{base}/math"
+					class="hover:text-primary font-semibold text-gray-600 transition-colors">Math</a
 				>
-				<a href="{base}/spelling" class="hover:text-primary font-semibold text-gray-600 transition-colors"
-					>Spelling</a
+				<a
+					href="{base}/spelling"
+					class="hover:text-primary font-semibold text-gray-600 transition-colors">Spelling</a
 				>
 				<a href="{base}/games" class="font-semibold text-teal-800">Games</a>
+				<a href="{base}/science" class="font-semibold text-indigo-800">Science</a>
 				<a href="{base}/login" class="hover:text-primary text-gray-600 transition-colors">
 					Settings 🔒
 				</a>

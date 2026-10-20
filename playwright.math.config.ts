@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
 	testDir: 'e2e',
-	testMatch: 'math-settings.test.ts',
+	testMatch: ['math-settings.test.ts', 'space-math.test.ts'],
 	workers: 1,
 	use: {
 		baseURL: 'http://localhost:4175',

@@ -32,7 +32,7 @@ export const handleError: HandleServerError = ({ error }) => {
 			message: error.publicMessage,
 			retryable: true,
 			help: [
-				'Check that the deployed secrets include supabase_url and supabase_service_role_key.',
+				'Check that the deployed secrets include supabase_url and SUPABASE_SERVICE_ROLE_KEY.',
 				'Confirm the Supabase URL starts with https:// and ends with .supabase.co.',
 				'Use a server-only service role key. Do not use a browser publishable key for server writes.',
 				'If the database was just created, run the schema SQL manually in the Supabase SQL Editor.'

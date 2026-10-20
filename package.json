@@ -20,7 +20,10 @@
 		"test:e2e:kitchen": "playwright test --config playwright.kitchen.config.ts",
 		"test:db:kitchen": "node scripts/word-kitchen/test-db.mjs",
 		"kitchen:assets": "node scripts/word-kitchen/seed.mjs --prepare-assets",
-		"kitchen:seed": "node scripts/word-kitchen/seed.mjs --database"
+		"kitchen:seed": "node scripts/word-kitchen/seed.mjs --database",
+		"science:catalog": "node --experimental-strip-types scripts/science/catalog.mjs",
+		"test:science": "node --experimental-strip-types --test scripts/science/catalog.test.mjs",
+		"test:e2e:science": "playwright test --config playwright.science.config.ts"
 	},
 	"devDependencies": {
 		"@electric-sql/pglite": "0.5.8",

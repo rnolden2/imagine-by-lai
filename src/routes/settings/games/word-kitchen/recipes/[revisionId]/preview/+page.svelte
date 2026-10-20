@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto, invalidateAll } from '$app/navigation';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
@@ -19,8 +20,13 @@
 			});
 			const b = await r.json();
 			if (!r.ok) throw new Error(b.message ?? 'Could not save.');
-			if (preview) await goto(`/games/word-kitchen/session/${b.id}`);
-			else if(body.action==='revise'){await goto(`/settings/games/word-kitchen/recipes/${b.id}/preview`);} else {
+			if (preview)
+				await goto(resolve('/games/word-kitchen/session/[sessionId]', { sessionId: b.id }));
+			else if (body.action === 'revise') {
+				await goto(
+					resolve('/settings/games/word-kitchen/recipes/[revisionId]/preview', { revisionId: b.id })
+				);
+			} else {
 				await invalidateAll();
 				message = 'Saved.';
 			}
@@ -34,7 +40,8 @@
 
 <svelte:head><title>Review {data.recipe.title} · Parent kitchen</title></svelte:head>
 <section class="mx-auto max-w-5xl px-6 py-10">
-	<a class="font-bold text-teal-800" href="/settings/games/word-kitchen/recipes">← Recipe reviews</a
+	<a class="font-bold text-teal-800" href={resolve('/settings/games/word-kitchen/recipes')}
+		>← Recipe reviews</a
 	>
 	<h1 class="my-6 text-4xl font-extrabold">{data.recipe.title}</h1>
 	<p>{data.recipe.description}</p>
@@ -43,7 +50,7 @@
 		only to this exact revision.
 	</p>
 	<div class="my-8 flex flex-wrap gap-3">
-		{#each Object.values(data.manifest) as asset}<figure
+		{#each Object.values(data.manifest) as asset, assetIndex (assetIndex)}<figure
 				class="rounded-xl bg-white p-3 text-center"
 			>
 				<img
@@ -58,16 +65,71 @@
 	</div>
 	<h2 class="text-2xl font-bold">Words & meanings</h2>
 	<dl class="my-4 grid gap-3 md:grid-cols-2">
-		{#each data.recipe.vocabulary as word}<div class="rounded-xl bg-white p-4">
+		{#each data.recipe.vocabulary as word (word.id)}<div class="rounded-xl bg-white p-4">
 				<dt class="font-bold">{word.word}</dt>
 				<dd>{word.definition}</dd>
 			</div>{/each}
 	</dl>
-	{#if data.owner?.origin==='generated'&&!data.owner.archived_at}<details class="my-8 rounded-2xl bg-white p-5"><summary class="cursor-pointer font-bold">Edit a new revision</summary><form class="mt-5 space-y-4" onsubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void request({action:'revise',revisionId:data.revision.id,checksum:data.revision.checksum,title:f.get('title'),description:f.get('description'),definitions:data.recipe.vocabulary.map(v=>({id:v.id,definition:f.get(`definition-${v.id}`)}))});}}><label class="block">Recipe title<input name="title" value={data.recipe.title} maxlength="80" required class="mt-2 w-full rounded-xl" /></label><label class="block">Description<textarea name="description" maxlength="400" required class="mt-2 w-full rounded-xl">{data.recipe.description}</textarea></label>{#each data.recipe.vocabulary as word}<label class="block">Meaning of {word.word}<input name={`definition-${word.id}`} value={word.definition} maxlength="240" required class="mt-2 w-full rounded-xl" /></label>{/each}<p class="text-sm">Edits create a new revision for review. Existing games keep their original words and pictures.</p><button class="rounded-xl bg-teal-800 px-5 py-3 font-bold text-white" disabled={busy}>Save new revision</button></form></details>{/if}<h2 class="mt-8 text-2xl font-bold">Try the game</h2>
+	{#if data.owner?.origin === 'generated' && !data.owner.archived_at}<details
+			class="my-8 rounded-2xl bg-white p-5"
+		>
+			<summary class="cursor-pointer font-bold">Edit a new revision</summary>
+			<form
+				class="mt-5 space-y-4"
+				onsubmit={(e) => {
+					e.preventDefault();
+					const f = new FormData(e.currentTarget);
+					void request({
+						action: 'revise',
+						revisionId: data.revision.id,
+						checksum: data.revision.checksum,
+						title: f.get('title'),
+						description: f.get('description'),
+						definitions: data.recipe.vocabulary.map((v) => ({
+							id: v.id,
+							definition: f.get(`definition-${v.id}`)
+						}))
+					});
+				}}
+			>
+				<label class="block"
+					>Recipe title<input
+						name="title"
+						value={data.recipe.title}
+						maxlength="80"
+						required
+						class="mt-2 w-full rounded-xl"
+					/></label
+				><label class="block"
+					>Description<textarea
+						name="description"
+						maxlength="400"
+						required
+						class="mt-2 w-full rounded-xl">{data.recipe.description}</textarea
+					></label
+				>{#each data.recipe.vocabulary as word (word.id)}<label class="block"
+						>Meaning of {word.word}<input
+							name={`definition-${word.id}`}
+							value={word.definition}
+							maxlength="240"
+							required
+							class="mt-2 w-full rounded-xl"
+						/></label
+					>{/each}
+				<p class="text-sm">
+					Edits create a new revision for review. Existing games keep their original words and
+					pictures.
+				</p>
+				<button class="rounded-xl bg-teal-800 px-5 py-3 font-bold text-white" disabled={busy}
+					>Save new revision</button
+				>
+			</form>
+		</details>{/if}
+	<h2 class="mt-8 text-2xl font-bold">Try the game</h2>
 	<div class="my-5 flex flex-wrap items-center gap-4">
 		{#if !data.owner?.child_id}<label
 				>Preview as <select bind:value={selected} class="rounded-lg"
-					><option value={0}>Choose child</option>{#each data.children as c}<option
+					><option value={0}>Choose child</option>{#each data.children as c (c.id)}<option
 							value={Number(c.id)}>{c.name}</option
 						>{/each}</select
 				></label
@@ -97,7 +159,7 @@
 	<details class="my-8">
 		<summary class="cursor-pointer font-bold">Review the {duration}-minute sequence</summary>
 		<ol class="mt-4 list-decimal pl-6">
-			{#each data.recipe.steps.filter((s) => s.durationPresets.includes(duration)) as step}<li
+			{#each data.recipe.steps.filter( (s) => s.durationPresets.includes(duration) ) as step (step.id)}<li
 					class="py-2"
 				>
 					{step.instruction}
@@ -107,7 +169,7 @@
 	</details>
 	{#if data.revision.status === 'ready_for_preview'}<label class="block"
 			><input type="checkbox" bind:checked={reviewed} /> I reviewed the pictures, words, and play sequence
-			for my child.</label
+			for the shared recipe library.</label
 		><button
 			class="mt-5 rounded-xl bg-teal-800 px-6 py-3 font-bold text-white"
 			disabled={!reviewed || busy}
@@ -118,7 +180,7 @@
 					revisionId: data.revision.id,
 					checksum: data.revision.checksum,
 					preferenceRevision: data.revision.preference_revision
-				})}>Approve and publish</button
+				})}>Approve and share with all chefs</button
 		>{/if}{#if data.owner?.origin === 'generated' && !data.owner.archived_at}<button
 			class="mt-5 ml-4 rounded-xl border px-5 py-3"
 			disabled={busy}

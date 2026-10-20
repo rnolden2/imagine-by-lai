@@ -25,7 +25,7 @@
 		error?.help ??
 		(isDatabaseError
 			? [
-					'Verify the deployed secrets: supabase_url and supabase_service_role_key.',
+					'Verify the deployed secrets: supabase_url and SUPABASE_SERVICE_ROLE_KEY.',
 					'Confirm the Supabase project is online and the service role key has not been rotated.',
 					'Run the schema SQL manually in the Supabase SQL Editor before using the app.',
 					'Refresh after the deployment secrets are available to the Cloud Run service.'
@@ -44,7 +44,7 @@
 <main class="min-h-screen bg-slate-50 px-4 py-10">
 	<section class="mx-auto max-w-3xl overflow-hidden rounded-2xl bg-white shadow-xl">
 		<div class="{isDatabaseError ? 'bg-amber-400' : 'bg-primary'} px-6 py-5">
-			<p class="text-sm font-black uppercase tracking-wide text-slate-800">Status {status}</p>
+			<p class="text-sm font-black tracking-wide text-slate-800 uppercase">Status {status}</p>
 			<h1 class="mt-1 text-3xl font-black text-slate-950">{title}</h1>
 		</div>
 

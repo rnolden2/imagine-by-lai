@@ -1,0 +1,10 @@
+.gcloudignore
+.git
+#!include:.gitignore
+
+# Runtime artwork is intentionally ignored by git but required in the image.
+!static/
+!static/**
+!resources/
+!resources/**
+!cloudbuild.yaml

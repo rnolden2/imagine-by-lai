@@ -14,7 +14,7 @@ const OPENAI_API_KEY_SECRET_NAME = privateEnv.OPENAI_API_KEY_SECRET_NAME ?? 'ope
 const GEMINI_API_KEY_SECRET_NAME = privateEnv.GEMINI_API_KEY_SECRET_NAME ?? 'gemini_api';
 const SUPABASE_URL_SECRET_NAME = privateEnv.SUPABASE_URL_SECRET_NAME ?? 'supabase_url';
 const SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME =
-	privateEnv.SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME ?? 'supabase_service_role_key';
+	privateEnv.SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME ?? 'SUPABASE_SERVICE_ROLE_KEY';
 
 async function getSecretValue(secretName: string): Promise<string> {
 	const cached = secretCache.get(secretName);

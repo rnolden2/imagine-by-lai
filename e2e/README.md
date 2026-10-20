@@ -12,6 +12,11 @@ It exercises admin login, the enhanced settings form, Supabase client requests,
 settings reloads, and practice for every operation. It also checks adding modes,
 empty selections, isolation between children, and database write failures.
 
+Space Math is covered by the same suite: all seven saved math modes, hints,
+unlimited retries on the same question, fuel and planet progression, math history,
+child switching, live settings updates, non-blocking save failures, keyboard play,
+reduced motion, and mobile layout. Open it from Games or `/games/space-math`.
+
 `fixtures/math-backend.mjs` replaces outgoing database requests with an in-memory
 fixture for this test process only. All credentials are test values. The suite
 does not access live Supabase or verify its schema, constraints, permissions, or

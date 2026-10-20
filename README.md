@@ -83,7 +83,7 @@ Direct API keys and Supabase values take precedence over Secret Manager. To use 
 | `OPENAI_API_KEY_SECRET_NAME`            | `openAI_api_key`            |
 | `GEMINI_API_KEY_SECRET_NAME`            | `gemini_api`                |
 | `SUPABASE_URL_SECRET_NAME`              | `supabase_url`              |
-| `SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME` | `supabase_service_role_key` |
+| `SUPABASE_SERVICE_ROLE_KEY_SECRET_NAME` | `SUPABASE_SERVICE_ROLE_KEY` |
 
 `ADMIN_PASSWORD` is read directly from the runtime environment. Secret names are case-sensitive; the default OpenAI secret is `openAI_api_key`, matching the existing Cloud Run configuration. A deployment can inject that secret into `OPENAI_API_KEY`, or the server can retrieve it through Secret Manager. No local API key is required when Secret Manager access is configured.
 
@@ -97,7 +97,7 @@ The credential identity must have access to the configured services and bucket, 
 
 ### AI provider selection
 
-`AI_PROVIDER=openai` is the default for story text, cover generation/regeneration, stories created from images, and word explanations. Gemini remains installed and can be selected with `AI_PROVIDER=gemini`; restart the server or deploy a new revision after changing configuration.
+`AI_PROVIDER=openai` is the default for story text, cover generation/regeneration, stories created from images, and word explanations. If an OpenAI request fails, the app makes one Gemini fallback attempt. This covers story text and illustrations, word definitions, and kitchen recipe plans and artwork. Explicit model safety refusals are not retried through another provider. Set `AI_PROVIDER=gemini` to use Gemini directly; restart the server or deploy a new revision after changing configuration.
 
 | Variable             | Default         | Purpose                                                                       |
 | -------------------- | --------------- | ----------------------------------------------------------------------------- |
@@ -107,7 +107,7 @@ The credential identity must have access to the configured services and bucket, 
 
 Gemini mode uses `gemini-2.5-pro` for text/definitions and `gemini-2.5-flash-image` for illustrations. Provider switching is explicit: errors do not silently send requests to the other provider. OpenAI requests use bounded timeouts and no automatic SDK retries. Image failures retain the existing story-recovery behavior.
 
-The OpenAI SDK and Secret Manager key integration are shared across these operations. See the [OpenAI image generation guide](https://developers.openai.com/api/docs/guides/image-generation) for API requirements. Google Cloud Storage and Cloud Text-to-Speech remain in use. Word Kitchen is still a proposed feature; its generation workflow is not implemented by this provider switch.
+The OpenAI SDK and Secret Manager key integration are shared across these operations. See the [OpenAI image generation guide](https://developers.openai.com/api/docs/guides/image-generation) for API requirements. Google Cloud Storage and Cloud Text-to-Speech remain in use. Word Kitchen reserves a separate allowance before each Gemini fallback and records the actual image provider in asset provenance. If both providers fail, the job stops with `AI_PROVIDERS_FAILED`. Provider attempts share an overall timeout: OpenAI gets half, and Gemini gets the remaining time. A timed-out primary request may still be billed.
 
 ### Run
 
@@ -157,18 +157,35 @@ The workspace also includes Cloud Run deployment configuration. See the [deploym
 
 `docker-compose.yml` still includes legacy SQLite mounts and does not configure Google Cloud credentials; it needs configuration review before use with the current Supabase-backed app.
 
+## Science Constellation
+
+The parent-facing `/science` page connects 148 starter activities for ages 5–10 in a subject-colored constellation. Filter by age, setting, time, supervision, and materials; select an activity to read its instructions and explore related science. See the [science catalog guide](science/README.md) for the resumable AI expansion script targeting 1,000 activities, human review workflow, and optional Supabase import.
+
+```sh
+npm run science:catalog -- expand --target 1000
+npm run test:science
+```
+
+The expansion command previews its plan; add `--run` with `OPENAI_API_KEY` configured to generate drafts. The bundled catalog works without applying the new database migration.
+
 ## Word Kitchen
 
 Word Kitchen adds a recipe library under `/games`, with Fruit Salad, Pancakes,
 and Pizza at three play lengths. Children practice current grade/custom spelling
 words while selecting ingredients, measuring, mixing, spelling, and decorating.
+Published recipes are shared with every chef. Recipe grade bands are shown as
+guidance, while each child's food preferences and practice words still apply.
+Apply `supabase/migrations/20261020053133_shared_recipes_word_kitchen.sql` before
+deploying shared recipe access; existing published recipes need no reassignment.
+Cooking steps animate the matching action, including slicing, whisking, pouring,
+and sprinkling, with keyboard controls and reduced-motion support.
 Progress, assistance, and one completion reward are saved transactionally; a lost
 response can be retried without duplicate points. Twenty starter assets are bundled.
 
 Parents manage food preferences, device access, favorite foods, generation jobs,
 recipe previews/approval, immutable revisions, and learning evidence at
 `/settings/games`. New AI content is generated by an authenticated Cloud Tasks
-worker and stays private until the parent approves its exact revision. OpenAI is
+worker and stays private until the parent approves its exact revision for the shared library. OpenAI is
 the default provider; Gemini remains selectable with `AI_PROVIDER=gemini`.
 
 Games remain disabled until their migration and seed are installed. Paid generation
