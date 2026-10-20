@@ -6,8 +6,7 @@ import {
 	type GameEvent,
 	type SessionSnapshot,
 	type SessionState,
-	type Recipe,
-	grades
+	type Recipe
 } from '$lib/games/word-kitchen/contracts';
 import { applyEvent, initialState, presentStep, summarize } from '$lib/games/word-kitchen/engine';
 import { requireChild } from './authorization';
@@ -84,11 +83,6 @@ export async function startSession(
 	if (!revision) error(404, 'Not found.');
 	const context = await learningContext(childId);
 	const recipe = validateRecipe(revision.definition);
-	if (
-		grades.indexOf(context.child.grade) < grades.indexOf(recipe.gradeBand.min) ||
-		grades.indexOf(context.child.grade) > grades.indexOf(recipe.gradeBand.max)
-	)
-		error(409, 'RECIPE_BLOCKED');
 	if (!compatible(recipe, context.settings.excludedFoodConceptIds)) error(409, 'RECIPE_BLOCKED');
 	if (!recipe.supportedDurations.includes(duration)) error(400, 'Unsupported duration.');
 	await deliveryManifest(recipe); // Fail before creating a session with missing critical assets.

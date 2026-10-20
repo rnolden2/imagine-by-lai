@@ -39,7 +39,6 @@ src/lib/server/api-project.json
 skills-lock.json
 
 
-deploy/cloud-run-service.yaml
 skaffold.yaml
 
 # Static Assets
@@ -60,19 +59,12 @@ cloudbuild.yaml
 .direnv/
 !/supabase/
 /supabase/*
-!/supabase/migrations/
-/supabase/migrations/*
-!/supabase/migrations/20261002173051_recovery_word_kitchen.sql
-!/supabase/migrations/20261002190844_admin_daily_limit_word_kitchen.sql
-!/supabase/migrations/20261020053133_shared_recipes_word_kitchen.sql
+
 
 # Cloud Build
 deploy/
 scripts/
 
 # Science catalog source and tools; generated drafts stay local.
-!/scripts/
 /scripts/*
-!/scripts/science/
-!/supabase/migrations/20261018224806_science_catalog.sql
-/science-work/
+

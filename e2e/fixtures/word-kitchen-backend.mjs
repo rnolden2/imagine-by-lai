@@ -54,23 +54,51 @@ for (const { definition: r, checksum } of seed.recipes) {
 		r.recipeId
 	]);
 }
+if (process.env.WORD_KITCHEN_BROWSER_SHARED_TEST === '1') {
+	const recipe = {
+		...seed.recipes[0].definition,
+		recipeId: '33333333-3333-4333-a333-333333333333',
+		revisionId: '44444444-4444-4444-a444-444444444444',
+		title: 'Shared Garden Salad',
+		gradeBand: { min: '6', max: '8' }
+	};
+	await db.query(
+		`insert into game_recipes(id,slug,child_id,origin) values($1,'shared-garden-salad',1,'generated')`,
+		[recipe.recipeId]
+	);
+	await db.query(
+		`insert into game_recipe_revisions(id,recipe_id,revision,definition,checksum,status)
+		 values($1,$2,1,$3,'shared-browser-fixture','published')`,
+		[recipe.revisionId, recipe.recipeId, JSON.stringify(recipe)]
+	);
+	await db.query('update game_recipes set published_revision_id=$1 where id=$2', [
+		recipe.revisionId,
+		recipe.recipeId
+	]);
+}
 const tables = new Set(
 	(await db.query(`select tablename from pg_tables where schemaname='public'`)).rows.map(
 		(r) => r.tablename
 	)
 );
+/** @param {unknown} body */
 const response = (body, status = 200) =>
 	new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+/** @param {string} name */
 const ident = (name) => {
 	if (!/^[a-z_][a-z_0-9]*$/.test(name)) throw new Error('Invalid fixture identifier');
 	return `"${name}"`;
 };
+/**
+ * @param {Parameters<typeof fetch>[0]} input
+ * @param {Parameters<typeof fetch>[1]} [init]
+ */
 globalThis.fetch = async (input, init) => {
 	const request = new Request(input, init);
 	const url = new URL(request.url);
 	if (url.origin !== 'https://kitchen-tests.supabase.co')
 		throw new Error(`Unexpected external request: ${url.origin}`);
-	const name = url.pathname.split('/').pop();
+	const name = url.pathname.split('/').pop() ?? '';
 	try {
 		if (url.pathname.includes('/rpc/')) {
 			if (!name.startsWith('wk_')) throw new Error('Unsupported RPC');
@@ -140,6 +168,8 @@ globalThis.fetch = async (input, init) => {
 						.join(',');
 			const limit = Number(url.searchParams.get('limit'));
 			if (limit > 0) tail += ` limit ${Math.min(10000, limit)}`;
+			const offset = Number(url.searchParams.get('offset'));
+			if (Number.isSafeInteger(offset) && offset > 0) tail += ` offset ${offset}`;
 			const result = await db.query(`select ${columns} from ${table}${where}${tail}`, values);
 			if (request.headers.get('accept')?.includes('vnd.pgrst.object'))
 				return result.rows.length === 1
@@ -186,7 +216,10 @@ globalThis.fetch = async (input, init) => {
 			return response(rows[0] ?? null);
 		return response(rows, request.method === 'POST' ? 201 : 200);
 	} catch (e) {
-		console.error('Fixture database operation failed', name, e.message);
-		return response({ code: e.code ?? 'P0001', message: e.message }, 400);
+		const message = e instanceof Error ? e.message : String(e);
+		const code =
+			e && typeof e === 'object' && 'code' in e && typeof e.code === 'string' ? e.code : 'P0001';
+		console.error('Fixture database operation failed', name, message);
+		return response({ code, message }, 400);
 	}
 };

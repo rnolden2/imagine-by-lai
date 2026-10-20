@@ -56,9 +56,17 @@ export async function limit(scope: string, count: number, seconds: number) {
 	)
 		error(429, 'Please wait a moment and try again.');
 }
-export function checkResult<T>(result: { data: T; error: unknown }): T {
+export function checkResult<T>(result: { data: T; error: unknown }, operation?: string): T {
 	if (result.error) {
-		console.error('word-kitchen.database', { failed: true });
+		const code = (result.error as { code?: unknown }).code;
+		console.error('word-kitchen.database', {
+			failed: true,
+			operation,
+			code:
+				typeof code === 'string' && /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(code)
+					? code
+					: 'UNKNOWN_DATABASE_ERROR'
+		});
 		error(503, 'The game service is temporarily unavailable.');
 	}
 	return result.data;

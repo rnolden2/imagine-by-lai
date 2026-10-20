@@ -1,5 +1,5 @@
 import { getSupabase } from '$lib/server/db';
-import { validateRecipe, grades } from '$lib/games/word-kitchen/contracts';
+import { validateRecipe } from '$lib/games/word-kitchen/contracts';
 import { access } from './authorization';
 import { checkResult } from './common';
 import { learningContext } from './learning-context';
@@ -13,45 +13,43 @@ export async function library(event: RequestEvent) {
 	const children =
 		checkResult(await db.from('child_profiles').select('id,name,grade').in('id', scope.childIds)) ??
 		[];
-	const recipes =
-		checkResult(await db.from('game_recipes').select('*').is('archived_at', null)) ?? [];
-	const revisions =
-		checkResult(
-			await db
-				.from('game_recipe_revisions')
-				.select('*')
-				.in(
-					'id',
-					recipes.flatMap((r) => (r.published_revision_id ? [r.published_revision_id] : []))
-				)
-		) ?? [];
-	const assignments =
-		checkResult(
-			await db
-				.from('game_recipe_assignments')
-				.select('*')
-				.in('child_id', scope.childIds)
-				.eq('enabled', true)
-		) ?? [];
+	const recipes = [];
+	const revisions = [];
+	// Published recipes form one shared library. Page through it rather than
+	// silently dropping recipes at the Data API's default row limit.
+	const pageSize = 100;
+	for (let offset = 0; ; offset += pageSize) {
+		const page =
+			checkResult(
+				await db
+					.from('game_recipes')
+					.select('id,origin,published_revision_id')
+					.is('archived_at', null)
+					.order('id')
+					.range(offset, offset + pageSize - 1)
+			) ?? [];
+		recipes.push(...page);
+		const ids = page.flatMap((r) => (r.published_revision_id ? [r.published_revision_id] : []));
+		if (ids.length) {
+			revisions.push(
+				...(checkResult(
+					await db
+						.from('game_recipe_revisions')
+						.select('id,recipe_id,definition')
+						.in('id', ids)
+						.eq('status', 'published')
+				) ?? [])
+			);
+		}
+		if (page.length < pageSize) break;
+	}
 	const cards = [];
 	for (const child of children) {
 		const context = await learningContext(Number(child.id));
 		for (const row of revisions) {
 			const recipe = validateRecipe(row.definition);
 			const owner = recipes.find((r) => r.id === row.recipe_id)!;
-			if (
-				owner.origin === 'generated' &&
-				!assignments.some(
-					(a) => a.recipe_id === owner.id && Number(a.child_id) === Number(child.id)
-				)
-			)
-				continue;
-			if (
-				!compatible(recipe, context.settings.excludedFoodConceptIds) ||
-				grades.indexOf(child.grade) < grades.indexOf(recipe.gradeBand.min) ||
-				grades.indexOf(child.grade) > grades.indexOf(recipe.gradeBand.max)
-			)
-				continue;
+			if (!compatible(recipe, context.settings.excludedFoodConceptIds)) continue;
 			const manifest = await deliveryManifest(recipe);
 			const hero = Object.values(manifest).find((a) => a.revisionId === recipe.heroAssetId);
 			cards.push({
@@ -62,6 +60,7 @@ export async function library(event: RequestEvent) {
 				hero: hero?.url,
 				durations: recipe.supportedDurations,
 				origin: owner.origin,
+				gradeBand: recipe.gradeBand,
 				notice: context.notice
 			});
 		}

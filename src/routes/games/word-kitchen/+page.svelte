@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
@@ -27,7 +28,7 @@
 			});
 			const b = await r.json();
 			if (!r.ok) throw new Error(b.message ?? 'Could not start. Please try again.');
-			await goto(`/games/word-kitchen/session/${b.id}`);
+			await goto(resolve('/games/word-kitchen/session/[sessionId]', { sessionId: b.id }));
 		} catch (e) {
 			message = e instanceof Error ? e.message : 'Connection interrupted. Try again.';
 		} finally {
@@ -38,16 +39,17 @@
 
 <svelte:head><title>Word Kitchen · Choose a recipe</title></svelte:head>
 <section class="mx-auto max-w-6xl px-5 py-10">
-	<a href="/games" class="font-bold text-teal-800">← Games</a>
+	<a href={resolve('/games')} class="font-bold text-teal-800">← Games</a>
 	<p class="mt-8 font-bold tracking-widest text-amber-700">WELCOME, LITTLE CHEF</p>
 	<h1 class="mt-2 text-5xl font-extrabold text-teal-950">What’s cooking today?</h1>
 	<p class="my-5 text-lg text-slate-600">
-		Pick a dish. Bring your words. We’ll make something wonderful.
+		Explore recipes shared with every chef. Grade levels are a guide—pick any dish and bring your
+		words.
 	</p>
 	<div class="my-8 flex flex-wrap gap-6">
 		<label class="font-bold"
 			>Chef <select class="ml-3 rounded-xl" bind:value={childId}
-				><option value={0}>Choose a chef</option>{#each data.children as child}<option
+				><option value={0}>Choose a chef</option>{#each data.children as child (child.id)}<option
 						value={Number(child.id)}>{child.name}</option
 					>{/each}</select
 			></label
@@ -59,13 +61,14 @@
 			></label
 		>
 	</div>
-	{#each data.active.filter((s) => s.childId === selected) as session}<a
+	{#each data.active.filter((s) => s.childId === selected) as session (session.id)}<a
 			class="mb-4 block rounded-2xl bg-teal-100 p-4 font-bold text-teal-900"
-			href={`/games/word-kitchen/session/${session.id}`}>Continue {session.title} →</a
+			href={resolve('/games/word-kitchen/session/[sessionId]', { sessionId: session.id })}
+			>Continue {session.title} →</a
 		>{/each}
 	<p role="alert" class="text-red-700">{message}</p>
 	<div class="grid gap-6 md:grid-cols-3">
-		{#each cards as card}<article
+		{#each cards as card (card.revisionId)}<article
 				class="overflow-hidden rounded-3xl border border-amber-100 bg-white shadow-sm"
 			>
 				<div class="flex h-56 items-center justify-center bg-amber-50">
@@ -79,9 +82,14 @@
 				</div>
 				<div class="p-6">
 					<p class="text-sm font-bold text-teal-700">
-						{card.origin === 'curated' ? 'KITCHEN FAVORITE' : 'MADE FOR YOU'}
+						{card.origin === 'curated' ? 'KITCHEN FAVORITE' : 'SHARED RECIPE'}
 					</p>
 					<h2 class="my-2 text-2xl font-extrabold">{card.title}</h2>
+					<p class="mb-3 text-sm font-semibold text-teal-700">
+						{card.gradeBand.min === card.gradeBand.max
+							? `Grade ${card.gradeBand.min}`
+							: `Grades ${card.gradeBand.min}–${card.gradeBand.max}`}
+					</p>
 					<p class="min-h-24 text-slate-600">{card.description}</p>
 					<button
 						disabled={busy || !card.durations.includes(duration)}
@@ -95,7 +103,8 @@
 			</p>{/each}
 	</div>
 	<p class="mt-6 text-sm text-slate-500">{cards[0]?.notice ?? ''} This is a pretend kitchen.</p>
-	{#if data.parent}<a class="mt-5 inline-block font-bold text-teal-800" href="/settings/games"
-			>Parent kitchen controls →</a
+	{#if data.parent}<a
+			class="mt-5 inline-block font-bold text-teal-800"
+			href={resolve('/settings/games')}>Parent kitchen controls →</a
 		>{/if}
 </section>

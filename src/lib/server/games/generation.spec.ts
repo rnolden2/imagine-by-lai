@@ -8,7 +8,7 @@ vi.mock('$env/dynamic/private',()=>({env:{WORD_KITCHEN_TASK_QUEUE:'projects/test
 vi.mock('$lib/server/db',()=>({getSupabase:async()=>mocks.db}));
 vi.mock('$lib/server/ai',()=>({generateGamePlan:mocks.plan,generateGameImage:mocks.image}));
 vi.mock('./assets',()=>({publishGeneratedAsset:mocks.publish,deliveryManifest:vi.fn()}));
-import { enqueueGeneration,runGeneration } from './generation';
+import { assetIdentity,enqueueGeneration,runGeneration } from './generation';
 const originalFetch=globalThis.fetch;let database:PGlite;
 beforeAll(async()=>{
 	process.env.WORD_KITCHEN_BROWSER_TEST='1';
@@ -49,4 +49,31 @@ it('reserves fallback spending and records Gemini asset provenance', async () =>
  const costs = await database.query<{ logical_key: string }>('select logical_key from game_cost_reservations where job_id=$1', [job.id]);
  expect(costs.rows.filter(row => row.logical_key.endsWith(':gemini'))).toHaveLength(2);
  expect(mocks.publish).toHaveBeenLastCalledWith(expect.any(String), expect.any(Number), expect.any(Buffer), { jobId: job.id, provider: 'gemini' }, false);
+});
+
+it('rejects missing shared content before creating a job or reserving provider spending', async () => {
+ const favorite = (await mocks.db!.from('game_favorite_foods').select('id').single()).data!;
+ const beforeJobs = await database.query('select id from game_generation_jobs order by id');
+ const beforeCosts = await database.query('select id from game_cost_reservations order by id');
+ const planCalls = mocks.plan.mock.calls.length;
+ const fixtureFetch = globalThis.fetch;
+ globalThis.fetch = async (input, init) => {
+  const request = new Request(input, init);
+  if (request.method === 'GET' && new URL(request.url).pathname.endsWith('/kitchen_concepts'))
+   return new Response('[]', { headers: { 'Content-Type': 'application/json' } });
+  return fixtureFetch(input, init);
+ };
+ try {
+  await expect(enqueueGeneration(1, favorite.id, randomUUID())).rejects.toMatchObject({
+   status: 503, body: { message: expect.stringContaining('starter content is missing') }
+  });
+ } finally { globalThis.fetch = fixtureFetch; }
+ expect((await database.query('select id from game_generation_jobs order by id')).rows).toEqual(beforeJobs.rows);
+ expect((await database.query('select id from game_cost_reservations order by id')).rows).toEqual(beforeCosts.rows);
+ expect(mocks.plan).toHaveBeenCalledTimes(planCalls);
+});
+
+it('reports a missing asset concept explicitly without a foreign-key write', async () => {
+ await expect(assetIdentity('tool:not-installed')).rejects.toThrow('MISSING_ASSET_CONCEPT');
+ expect((await database.query("select id from kitchen_asset_identities where concept_id='tool:not-installed'")).rows).toEqual([]);
 });

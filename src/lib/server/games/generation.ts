@@ -109,6 +109,20 @@ export async function enqueueGeneration(childId: number, favoriteId: string, key
 			.maybeSingle()
 	);
 	if (!favorite) error(404, 'Favorite not found.');
+	// Tools and the kitchen backdrop must be installed before purchasing a plan.
+	const sharedIds = concepts
+		.filter((c) => c.kind === 'tool' || c.kind === 'environment')
+		.map((c) => c.id);
+	const sharedConcepts =
+		checkResult(
+			await db.from('kitchen_concepts').select('id').in('id', sharedIds),
+			'generation.shared_concepts'
+		) ?? [];
+	if (sharedIds.some((id) => !sharedConcepts.some((concept) => concept.id === id)))
+		error(
+			503,
+			'Word Kitchen starter content is missing. Finish the kitchen setup before creating a game.'
+		);
 	const context = await learningContext(childId);
 	const input = {
 		favoriteName: favorite.display_name,
@@ -154,6 +168,11 @@ async function reserve(job: Job, key: string, estimate: number) {
 }
 export async function assetIdentity(conceptId: string, state = 'whole') {
 	const db = await getSupabase();
+	const concept = checkResult(
+		await db.from('kitchen_concepts').select('id').eq('id', conceptId).maybeSingle(),
+		'asset_identity.concept'
+	);
+	if (!concept) throw new Error('MISSING_ASSET_CONCEPT');
 	const identity = {
 		id: stableId(`identity:${conceptId}:${state}`),
 		concept_id: conceptId,
@@ -168,7 +187,8 @@ export async function assetIdentity(conceptId: string, state = 'whole') {
 			.upsert(identity, {
 				onConflict: 'concept_id,state,style,view,contract',
 				ignoreDuplicates: true
-			})
+			}),
+		'asset_identity.upsert'
 	);
 	return checkResult(
 		await db
@@ -179,7 +199,8 @@ export async function assetIdentity(conceptId: string, state = 'whole') {
 			.eq('style', identity.style)
 			.eq('view', identity.view)
 			.eq('contract', identity.contract)
-			.single()
+			.single(),
+		'asset_identity.select'
 	)!;
 }
 export const assetPrompt = (label: string, state = 'whole') =>
@@ -389,7 +410,7 @@ export async function runGeneration(jobId: string) {
 			parentCodes.includes(code) ||
 			code.includes('BUDGET') ||
 			code === 'UNCERTAIN_PROVIDER_RESULT' ||
-			['AI_PROVIDERS_FAILED', 'AI_GENERATION_TIMEOUT', 'AI_REQUEST_REFUSED'].includes(code)||code === 'ASSET_LIMIT'||code==='PROVIDER_CREDITS_EXHAUSTED'||code==='STALE_LEASE';
+			['AI_PROVIDERS_FAILED', 'AI_GENERATION_TIMEOUT', 'AI_REQUEST_REFUSED', 'MISSING_ASSET_CONCEPT'].includes(code)||code === 'ASSET_LIMIT'||code==='PROVIDER_CREDITS_EXHAUSTED'||code==='STALE_LEASE';
 		console.error('word-kitchen.generation', {
 			jobId: job.id,
 			stage: job.stage,

@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import CookingAction from '$lib/games/word-kitchen/CookingAction.svelte';
- import { onMount, untrack } from 'svelte';
+	import CookingAnimation from '$lib/games/word-kitchen/CookingAnimation.svelte';
+	import { onMount, untrack } from 'svelte';
 	import type { PageData } from './$types';
 	import type { GameEvent } from '$lib/games/word-kitchen/contracts';
 	let { data }: { data: PageData } = $props();
@@ -11,6 +13,8 @@
 	let pending = $state<GameEvent | null>(null);
 	let usedTiles = $state<string[]>([]);
 	let animating = $state(false);
+	let gestureProgress = $state(0);
+	let actionTimer: ReturnType<typeof setTimeout> | undefined;
 	let muted = $state(false);
 	let audio: HTMLAudioElement | undefined;
 	let audioUrl = '';
@@ -20,10 +24,41 @@
 	const endpoint = $derived(`/api/games/word-kitchen/session/${game.id}`);
 	const storageKey = $derived(`word-kitchen:pending:${game.id}`);
 	const sceneAssets = $derived(
-		Object.values(game.manifest).filter(
-			(a) => (step?.kind==='decoration'||step?.kind==='finish')?a.conceptId.startsWith('dish:'):a.conceptId==='tool:bowl'
+		Object.values(game.manifest).filter((a) =>
+			step?.kind === 'decoration' || step?.kind === 'finish'
+				? a.conceptId.startsWith('dish:')
+				: a.conceptId === 'tool:bowl'
 		)
 	);
+	const cookingAssets = $derived.by(() => {
+		const assets = Object.values(game.manifest);
+		const find = (concept: string) => assets.find((asset) => asset.conceptId === concept);
+		const object = find(step?.actionObject ?? '');
+		const ingredients = assets.filter((asset) => asset.conceptId.startsWith('ingredient:'));
+		const ingredient = object?.conceptId.startsWith('ingredient:')
+			? object
+			: (ingredients.find((asset) =>
+					step?.action.toLowerCase().includes(asset.label.toLowerCase())
+				) ?? ingredients[0]);
+		const vessel =
+			object && ['tool:bowl', 'tool:pan', 'tool:plate'].includes(object.conceptId)
+				? object
+				: find('tool:bowl');
+		const tool = find(
+			/flip/i.test(step?.action ?? '')
+				? 'tool:spatula'
+				: step?.mechanic === 'whisk'
+					? 'tool:whisk'
+					: 'tool:spoon'
+		);
+		return {
+			ingredient,
+			vessel,
+			tool,
+			cup: find('tool:cup'),
+			dish: assets.find((asset) => asset.conceptId.startsWith('dish:'))
+		};
+	});
 	function stopAudio() {
 		audioVersion++;
 		audioRequest?.abort();
@@ -66,6 +101,7 @@
 				throw new Error(b.message ?? 'Your progress could not be saved.');
 			}
 			game = b;
+			gestureProgress = 0;
 			remember(null);
 			answer = '';
 			usedTiles = [];
@@ -132,12 +168,20 @@
 		}
 	}
 	function action() {
-		if (!step || busy || pending) return;
+		if (!step || busy || pending || animating) return;
+		if (step.kind !== 'action') {
+			send('complete_action', { action: step.mechanic });
+			return;
+		}
+		const actionStep = step;
 		animating = true;
-		setTimeout(() => {
-			animating = false;
-			if (step) send('complete_action', { action: step.mechanic });
-		}, 350);
+		actionTimer = setTimeout(
+			() => {
+				animating = false;
+				if (step?.id === actionStep.id) send('complete_action', { action: actionStep.mechanic });
+			},
+			window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 150 : 1050
+		);
 	}
 	function decorate(conceptId: string) {
 		if (busy || pending) return;
@@ -186,6 +230,7 @@
 		return () => {
 			stopAudio();
 			clearInterval(timer);
+			clearTimeout(actionTimer);
 			window.removeEventListener('online', online);
 		};
 	});
@@ -196,7 +241,8 @@
 >
 <div class="kitchen-shell">
 	<header class="kitchen-top">
-		<a href="/games/word-kitchen" onclick={stopAudio}>← Recipe book</a><strong>{game.title}</strong
+		<a href={resolve('/games/word-kitchen')} onclick={stopAudio}>← Recipe book</a><strong
+			>{game.title}</strong
 		><button
 			onclick={() => {
 				muted = !muted;
@@ -224,40 +270,62 @@
 				<div><b>{game.results.uniqueWords}</b><span>Words practiced</span></div>
 				<div><b>{game.results.firstTryIndependent}</b><span>First-try answers</span></div>
 			</div>
-			<a class="primary" href="/games/word-kitchen">Back to the recipe book</a>
+			<a class="primary" href={resolve('/games/word-kitchen')}>Back to the recipe book</a>
 		</section>
 	{:else if step}
 		<div class="kitchen-grid">
-			<section class:animate={animating} class="scene" aria-label="Your pretend kitchen">
-				<img class="backdrop" src={Object.values(game.manifest).find(a=>a.conceptId==='environment:kitchen')?.url} alt="" /><div class="shelf"><span>✦ WORD KITCHEN ✦</span></div>
+			<section class="scene" aria-label="Your pretend kitchen">
+				<img
+					class="backdrop"
+					src={Object.values(game.manifest).find((a) => a.conceptId === 'environment:kitchen')?.url}
+					alt=""
+				/>
+				<div class="shelf"><span>✦ WORD KITCHEN ✦</span></div>
 				<div class="counter"></div>
-				<div class="dish">
-					{#each sceneAssets as asset}<img
-							src={asset.url}
-							alt={asset.label}
-							width="256"
-							height="256"
-							draggable="false"
-						/>{/each}{#each game.decorations as placement, i}<img
-							class="decoration"
-							src={Object.values(game.manifest).find((a) => a.conceptId === placement.conceptId)
-								?.url}
-							alt={`Decoration ${i + 1}`}
-							style={`left:${placement.x * 100}%;top:${placement.y * 100}%`}
-							width="64"
-							height="64"
-						/>{/each}
-				</div>
-				<div class="ingredients">
-					{#each step.assetRoles as role}{@const asset = game.manifest[role]}{#if asset}<img
+				{#if step.kind === 'action'}
+					<div class="cooking-stage">
+						{#key step.id}<CookingAnimation
+								mechanic={step.mechanic}
+								label={step.action}
+								active={animating}
+								progress={gestureProgress}
+								ingredientUrl={cookingAssets.ingredient?.url}
+								vesselUrl={cookingAssets.vessel?.url}
+								toolUrl={cookingAssets.tool?.url}
+								cupUrl={cookingAssets.cup?.url}
+								dishUrl={cookingAssets.dish?.url}
+							/>{/key}
+					</div>
+				{:else}<div class="dish">
+						{#each sceneAssets as asset, assetIndex (assetIndex)}<img
 								src={asset.url}
 								alt={asset.label}
-								width="90"
-								height="90"
-							/>{/if}{/each}
-				</div>
+								width="256"
+								height="256"
+								draggable="false"
+							/>{/each}{#each game.decorations as placement, i (i)}<img
+								class="decoration"
+								src={Object.values(game.manifest).find((a) => a.conceptId === placement.conceptId)
+									?.url}
+								alt={`Decoration ${i + 1}`}
+								style={`left:${placement.x * 100}%;top:${placement.y * 100}%`}
+								width="64"
+								height="64"
+							/>{/each}
+					</div>{/if}
+				{#if step.kind !== 'action'}<div class="ingredients">
+						{#each step.assetRoles as role, roleIndex (roleIndex)}{@const asset =
+								game.manifest[role]}{#if asset}<img
+									src={asset.url}
+									alt={asset.label}
+									width="90"
+									height="90"
+								/>{/if}{/each}
+					</div>{/if}
 				<p class="scene-caption">
-					{Object.keys(game.scene).length?'Your recipe is coming together.':'A fresh start. Let’s make something good.'}
+					{Object.keys(game.scene).length
+						? 'Your recipe is coming together.'
+						: 'A fresh start. Let’s make something good.'}
 				</p>
 			</section>
 			<section class="play-panel" aria-label="Cooking step">
@@ -283,7 +351,7 @@
 							>Continue together →</button
 						>
 					{:else if step.choices.length}<div class="choices">
-							{#each step.choices as choice}<button
+							{#each step.choices as choice (choice.id)}<button
 									disabled={busy || !!pending}
 									onclick={() => send('submit_answer', { answer: choice.id })}
 									>{#if choice.conceptId}{@const asset = Object.values(game.manifest).find(
@@ -305,7 +373,7 @@
 							<label for="word-answer"
 								>{step.mask ? `Fill the missing letters: ${step.mask}` : 'Your spelling'}</label
 							>{#if step.tiles.length}<div class="tiles" aria-label="Letter tiles">
-									{#each step.tiles as t}<button
+									{#each step.tiles as t (t.id)}<button
 											type="button"
 											disabled={usedTiles.includes(t.id) || busy || !!pending}
 											aria-label={`Add letter ${t.letter}`}
@@ -338,7 +406,8 @@
 						>
 					</div>
 				{:else if step.mechanic === 'decorate'}<div class="choices">
-						{#each step.assetRoles as role}{@const asset = game.manifest[role]}{#if asset}<button
+						{#each step.assetRoles as role, roleIndex (roleIndex)}{@const asset =
+								game.manifest[role]}{#if asset}<button
 									disabled={busy || !!pending || game.decorations.length >= 12}
 									onclick={() => decorate(asset.conceptId)}
 									><img src={asset.url} alt="" width="64" height="64" />Add {asset.label}</button
@@ -351,12 +420,25 @@
 						>Finish decorating →</button
 					>
 				{:else}<p>{step.quantityLabel ?? ''}</p>
- {#if step.kind==='action'}{#key step.id}<CookingAction mechanic={step.mechanic} label={step.action} imageUrl={Object.values(game.manifest).find(a=>a.conceptId===step?.actionObject)?.url} disabled={busy||!!pending||animating} oncomplete={action}/>{/key}{/if}
+					{#if step.kind === 'action'}{#key step.id}<CookingAction
+								mechanic={step.mechanic}
+								label={step.action}
+								imageUrl={['stir', 'whisk'].includes(step.mechanic)
+									? cookingAssets.tool?.url
+									: ['measure', 'pour'].includes(step.mechanic)
+										? cookingAssets.cup?.url
+										: step.mechanic === 'timer'
+											? cookingAssets.vessel?.url
+											: cookingAssets.ingredient?.url}
+								disabled={busy || !!pending || animating}
+								onprogress={(value) => (gestureProgress = value)}
+								oncomplete={action}
+							/>{/key}{/if}
 					<button
 						class="primary action-button"
 						onclick={action}
 						disabled={busy || !!pending || animating}
-						>{animating ? 'Making magic…' : step.action}
+						>{animating ? 'Cooking…' : step.action}
 						{step.mechanic === 'timer' ? '(skip wait)' : '→'}</button
 					>
 					<p class="gentle">Tap or use Enter. You can take your time.</p>{/if}
@@ -366,10 +448,10 @@
 					>{/if}
 				<div class="session-controls">
 					<button
-						disabled={busy || !!pending}
+						disabled={busy || !!pending || animating}
 						onclick={() => send(game.status === 'paused' ? 'resume' : 'pause')}
 						>{game.status === 'paused' ? 'Resume' : 'Take a break'}</button
-					><button disabled={busy || !!pending} onclick={() => send('abandon')}
+					><button disabled={busy || !!pending || animating} onclick={() => send('abandon')}
 						>Finish for now</button
 					>
 				</div>
@@ -378,7 +460,18 @@
 </div>
 
 <style>
- .backdrop{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.45}.shelf{position:relative;z-index:1}
+	.backdrop {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		opacity: 0.45;
+	}
+	.shelf {
+		position: relative;
+		z-index: 1;
+	}
 	.kitchen-shell {
 		min-height: calc(100vh - 70px);
 		background: #fffaf0;
@@ -437,6 +530,13 @@
 		display: flex;
 		justify-content: center;
 		align-items: center;
+	}
+	.cooking-stage {
+		position: absolute;
+		top: 24%;
+		left: 8%;
+		width: 84%;
+		height: 52%;
 	}
 	.dish > img:not(.decoration) {
 		width: 48%;
@@ -633,14 +733,6 @@
 	.metrics b {
 		font-size: 36px;
 	}
-	.animate .dish {
-		animation: mix 0.35s ease-in-out;
-	}
-	@keyframes mix {
-		50% {
-			transform: rotate(-8deg) translateY(-10px);
-		}
-	}
 	@media (max-width: 800px) {
 		.kitchen-grid {
 			grid-template-columns: 1fr;
@@ -654,6 +746,10 @@
 		}
 		.dish {
 			top: 20%;
+		}
+		.cooking-stage {
+			top: 19%;
+			height: 58%;
 		}
 		.dish > img:not(.decoration) {
 			width: 30%;
@@ -676,9 +772,6 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.animate .dish {
-			animation: none;
-		}
 		.progress div {
 			transition: none;
 		}
