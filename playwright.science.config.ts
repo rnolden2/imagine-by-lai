@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
@@ -6,8 +7,13 @@ export default defineConfig({
 	workers: 1,
 	use: {
 		baseURL: 'http://localhost:4178',
+		extraHTTPHeaders: { 'x-forwarded-proto': 'http' },
 		browserName: 'chromium',
-		channel: process.env.PLAYWRIGHT_CHANNEL,
+		channel:
+			process.env.PLAYWRIGHT_CHANNEL ??
+			(existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+				? 'chrome'
+				: undefined),
 		headless: true,
 		viewport: { width: 1440, height: 1100 }
 	},
@@ -22,7 +28,7 @@ export default defineConfig({
 		env: {
 			HOST: 'localhost',
 			PORT: '4178',
-			ORIGIN: 'http://localhost:4178',
+			PROTOCOL_HEADER: 'x-forwarded-proto',
 			SCIENCE_CATALOG_SOURCE: 'bundled',
 			ADMIN_PASSWORD: 'science-browser-fixture',
 			SUPABASE_URL: 'https://science-fixture.supabase.co',

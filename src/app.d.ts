@@ -10,6 +10,8 @@ declare global {
 			help?: string[];
 		}
 		interface Locals {
+			requestId?: string;
+			access?: import('#lib/server/games/authorization').AccessScope;
 			user?: {
 				isAdmin: boolean;
 			};

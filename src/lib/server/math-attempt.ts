@@ -1,4 +1,4 @@
-import { isOperation } from '$lib/math';
+import { isOperation } from '#lib/math';
 
 function integer(value: unknown, min: number, max: number): value is number {
 	return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;

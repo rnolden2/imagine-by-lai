@@ -1,6 +1,7 @@
-import { rpc } from '$lib/server/games/common';
-import { saveMathSettings, clearMathStats } from '$lib/server/math-settings';
-import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
+import { randomUUID } from 'node:crypto';
+import { rpc } from '#lib/server/games/common';
+import { saveMathSettings, clearMathStats } from '#lib/server/math-settings';
+import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '#lib/server/db';
 import { fail, isRedirect, redirect, error as kitError } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import type {
@@ -9,124 +10,79 @@ import type {
 	MathSettings,
 	SpellingSessionSummary,
 	SpellingWord,
-	Story,
 	User
-} from '$lib/types';
-import { GCS_BUCKET_NAME } from '$lib/server/secrets';
-import { generateStoryImage, generateStoryText } from '$lib/server/ai';
+} from '#lib/types';
+import { GCS_BUCKET_NAME } from '#lib/server/secrets';
+import { parseId, parseProfile, gradeSchema } from '#lib/server/profile-validation';
+import { listUnassignedStoryImages, objectNameFromGcsUrl } from '#lib/server/image-storage';
 import {
-	downloadImageFromGcsUrl,
-	deleteStoryImageObject,
-	listUnassignedStoryImages,
-	objectNameFromGcsUrl,
-	uploadStoryImage
-} from '$lib/server/image-storage';
+	deliverStoryImage,
+	assertStoryImageObject,
+	getSignedImageUrl
+} from '#lib/server/image-storage';
+import {
+	enqueueStoryJob,
+	recoverStoryJob as recoverAcceptedStoryJob,
+	storyJobFailure
+} from '#lib/server/story-jobs';
 
-function mapUser(row: any): User {
+function mapUser(row: User): User {
 	return { ...row, user_id: row.id } as User;
 }
 
-function mapStory(row: any): Story {
-	return { ...row, user_id: row.child_id } as Story;
+function mapStory<T extends { child_id: number | null }>(row: T): T & { user_id: number | null } {
+	return { ...row, user_id: row.child_id };
 }
 
-function mapMathSettings(row: any): MathSettings {
+function mapMathSettings(row: MathSettings): MathSettings {
 	return { ...row, user_id: row.child_id, config: row.config ?? {} } as MathSettings;
 }
 
-function groupMathStats(rows: any[]): MathSessionSummary[] {
-	const grouped = new Map<string, MathSessionSummary>();
-
-	for (const row of rows) {
-		const key = `${row.child_id}:${row.session_id}`;
-		const existing = grouped.get(key);
-		if (!existing) {
-			grouped.set(key, {
-				child_name: row.child_profiles?.name ?? null,
-				user_name: row.child_profiles?.name ?? null,
-				session_id: row.session_id,
-				started_at: row.created_at,
-				total: 0,
-				correct: 0
-			});
-		}
-
-		const session = grouped.get(key)!;
-		session.total += 1;
-		if (row.is_correct) session.correct += 1;
-		if (new Date(row.created_at).getTime() < new Date(session.started_at).getTime()) {
-			session.started_at = row.created_at;
-		}
-	}
-
-	return [...grouped.values()]
-		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-		.slice(0, 100);
+function pageNumber(url: URL, name: string) {
+	const value = Number(url.searchParams.get(name) ?? '1');
+	if (!Number.isSafeInteger(value) || value < 1 || value > 10000)
+		throw kitError(400, `Invalid ${name}.`);
+	return value;
 }
 
-function groupSpellingStats(rows: any[]): SpellingSessionSummary[] {
-	const grouped = new Map<string, SpellingSessionSummary>();
-
-	for (const row of rows) {
-		const key = `${row.session_id}:${row.grade}`;
-		const existing = grouped.get(key);
-		if (!existing) {
-			grouped.set(key, {
-				child_name: row.child_profiles?.name ?? null,
-				user_name: row.child_profiles?.name ?? null,
-				session_id: row.session_id,
-				started_at: row.created_at,
-				total: 0,
-				correct: 0,
-				grade: row.grade
-			});
-		}
-
-		const session = grouped.get(key)!;
-		session.total += 1;
-		if (row.is_correct) session.correct += 1;
-		if (new Date(row.created_at).getTime() < new Date(session.started_at).getTime()) {
-			session.started_at = row.created_at;
-		}
-	}
-
-	return [...grouped.values()]
-		.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime())
-		.slice(0, 100);
+function imageMaintenanceFailure(cause: unknown) {
+	const detail = cause instanceof Error && cause.cause ? cause.cause : cause;
+	const message =
+		detail && typeof detail === 'object' && 'message' in detail ? detail.message : null;
+	if (typeof message !== 'string') return null;
+	if (message.includes('IMAGE_MIGRATION_REQUIRED'))
+		return fail(409, {
+			message:
+				'Image maintenance must finish before this change. An administrator can resolve unsupported legacy images.'
+		});
+	if (message.includes('IMAGE_UNAVAILABLE'))
+		return fail(409, {
+			message:
+				'This illustration is being removed. Refresh the image library and choose another illustration.'
+		});
+	return null;
 }
 
-async function generateAndUploadStoryImage(story: Story): Promise<{
-	imageUrl: string;
-	imageObjectName: string;
-}> {
-	const storyExcerpt = story.content.replace(/\s+/g, ' ').trim().slice(0, 1200);
-	const prompt = [
-		'Create a warm, colorful children storybook illustration.',
-		`Story idea: ${story.prompt}`,
-		`Grade level: ${story.grade_level}`,
-		storyExcerpt ? `Story excerpt: ${storyExcerpt}` : '',
-		'Show one clear main scene. Avoid text, captions, logos, or watermarks.'
-	]
-		.filter(Boolean)
-		.join('\n');
-
-	const imageBuffer = await generateStoryImage(prompt);
-	const storedImage = await uploadStoryImage(imageBuffer);
-	return {
-		imageUrl: storedImage.url,
-		imageObjectName: storedImage.objectName
-	};
-}
-
-export const load: PageServerLoad = async () => {
+export const load: PageServerLoad = async (event) => {
+	const imagePageToken = event.url.searchParams.get('imagePageToken') ?? '';
+	if (imagePageToken.length > 2048) throw kitError(400, 'Invalid image page.');
+	const requestedTab = event.url.searchParams.get('adminTab');
+	if (requestedTab && !['kids', 'math', 'spelling', 'status'].includes(requestedTab))
+		throw kitError(400, 'Invalid admin tab.');
+	const storyAdminPage = pageNumber(event.url, 'storyAdminPage');
+	const missingStoryPage = pageNumber(event.url, 'missingStoryPage');
+	const lessonPage = pageNumber(event.url, 'lessonPage');
+	const wordPage = pageNumber(event.url, 'wordPage');
+	const storyPageSize = 24;
+	const listPageSize = 100;
 	let usersResult;
 	let lessonsResult;
 	let storiesResult;
 	let storiesWithoutImagesResult;
 	let mathSettingsResult;
-	let mathAttemptsResult;
+	let practiceSummaryResult;
 	let spellingWordsResult;
-	let spellingAttemptsResult;
+	let catalogCountsResult;
 
 	try {
 		const supabase = await getSupabase();
@@ -136,39 +92,46 @@ export const load: PageServerLoad = async () => {
 			storiesResult,
 			storiesWithoutImagesResult,
 			mathSettingsResult,
-			mathAttemptsResult,
+			practiceSummaryResult,
 			spellingWordsResult,
-			spellingAttemptsResult
+			catalogCountsResult
 		] = await Promise.all([
-			supabase.from('child_profiles').select('*').order('name', { ascending: true }),
-			supabase.from('lessons').select('*').order('lesson', { ascending: true }),
+			supabase
+				.from('child_profiles')
+				.select('id,name,grade,gender,character_description,story_themes,story_length_minutes')
+				.order('name', { ascending: true }),
+			supabase
+				.from('lessons')
+				.select('id,lesson')
+				.order('lesson', { ascending: true })
+				.range((lessonPage - 1) * listPageSize, lessonPage * listPageSize),
 			supabase
 				.from('stories')
-				.select('*')
-				.not('image_url', 'is', null)
-				.neq('image_url', '')
-				.order('created_at', { ascending: false }),
-			supabase
-				.from('stories')
-				.select('*')
-				.or('image_url.is.null,image_url.eq.')
-				.order('created_at', { ascending: false }),
-			supabase.from('math_settings').select('*').order('child_id', { ascending: true }),
-			supabase
-				.from('math_attempts')
-				.select('child_id, session_id, created_at, is_correct, child_profiles(name)')
+				.select('id,prompt,image_url,image_object_name,child_id,created_at')
+				.or('image_object_name.not.is.null,and(image_url.not.is.null,image_url.neq.)')
 				.order('created_at', { ascending: false })
-				.limit(1000),
+				.order('id', { ascending: false })
+				.range((storyAdminPage - 1) * storyPageSize, storyAdminPage * storyPageSize),
+			supabase
+				.from('stories')
+				.select('id,prompt,image_url,image_object_name,child_id,created_at')
+				.is('image_object_name', null)
+				.or('image_url.is.null,image_url.eq.')
+				.order('created_at', { ascending: false })
+				.order('id', { ascending: false })
+				.range((missingStoryPage - 1) * storyPageSize, missingStoryPage * storyPageSize),
+			supabase
+				.from('math_settings')
+				.select('id,child_id,operations,config,updated_at')
+				.order('child_id', { ascending: true }),
+			supabase.rpc('app_practice_summaries'),
 			supabase
 				.from('spelling_words')
-				.select('*')
+				.select('id,word,grade')
 				.order('grade', { ascending: true })
-				.order('word', { ascending: true }),
-			supabase
-				.from('spelling_attempts')
-				.select('session_id, created_at, is_correct, grade, child_profiles(name)')
-				.order('created_at', { ascending: false })
-				.limit(1000)
+				.order('word', { ascending: true })
+				.range((wordPage - 1) * listPageSize, wordPage * listPageSize),
+			supabase.rpc('app_admin_catalog_counts')
 		]);
 
 		const namedResults = [
@@ -177,9 +140,9 @@ export const load: PageServerLoad = async () => {
 			['stories', storiesResult],
 			['stories without images', storiesWithoutImagesResult],
 			['math settings', mathSettingsResult],
-			['math attempts', mathAttemptsResult],
+			['practice summaries', practiceSummaryResult],
 			['spelling words', spellingWordsResult],
-			['spelling attempts', spellingAttemptsResult]
+			['catalog counts', catalogCountsResult]
 		] as const;
 
 		for (const [name, result] of namedResults) {
@@ -189,68 +152,131 @@ export const load: PageServerLoad = async () => {
 		throw kitError(503, getSupabaseErrorMessage(error));
 	}
 
-	const stories = (storiesResult.data ?? []).map(mapStory);
+	const storyRows = (storiesResult.data ?? []).slice(0, storyPageSize).map(mapStory);
+	const stories = await Promise.all(storyRows.map(deliverStoryImage));
+	const missingStories = (storiesWithoutImagesResult.data ?? [])
+		.slice(0, storyPageSize)
+		.map(mapStory);
 	let availableImages: { url: string; objectName: string; name: string; timeCreated: string }[] =
 		[];
+	let hasMoreAvailableImages = false;
+	let nextImagePageToken: string | null = null;
 	let gcsError: string | null = null;
 
 	if (GCS_BUCKET_NAME) {
 		try {
 			const assignedObjectNames = new Set(
-				stories
+				storyRows
 					.map((story) => story.image_object_name ?? objectNameFromGcsUrl(story.image_url ?? ''))
 					.filter(Boolean) as string[]
 			);
 			const assignedUrls = new Set(
-				stories.map((story) => story.image_url).filter(Boolean) as string[]
+				storyRows.map((story) => story.image_url).filter(Boolean) as string[]
 			);
-			availableImages = await listUnassignedStoryImages(assignedObjectNames, assignedUrls);
-		} catch (error) {
-			console.error('Failed to fetch story images:', error);
+			const available = await listUnassignedStoryImages(
+				assignedObjectNames,
+				assignedUrls,
+				imagePageToken || undefined,
+				async (objects) => {
+					if (!objects.length) return new Set();
+					const db = await getSupabase();
+					const references = await db
+						.from('stories')
+						.select('image_object_name')
+						.in('image_object_name', objects);
+					if (references.error)
+						throwSupabaseError('checking assigned story images', references.error);
+					return new Set(
+						(references.data ?? [])
+							.map((row) => row.image_object_name)
+							.filter((object): object is string => Boolean(object))
+					);
+				}
+			);
+			availableImages = available.images;
+			hasMoreAvailableImages = available.hasMore;
+			nextImagePageToken = available.nextPageToken;
+		} catch {
+			console.error('story.images.list.failed');
 			gcsError = 'Failed to fetch images from Google Cloud Storage';
 		}
 	} else {
 		gcsError = 'GCS_BUCKET_NAME environment variable is not configured';
 	}
 
+	const catalogCounts = catalogCountsResult.data as Record<string, unknown> | null;
+	for (const key of ['storyCount', 'lessonCount', 'spellingWordCount']) {
+		if (!Number.isSafeInteger(Number(catalogCounts?.[key])) || Number(catalogCounts?.[key]) < 0)
+			throw kitError(503, 'Admin catalog counts are unavailable.');
+	}
+
 	return {
 		users: (usersResult.data ?? []).map(mapUser),
-		lessons: (lessonsResult.data ?? []) as unknown as Lesson[],
+		lessons: (lessonsResult.data ?? []).slice(0, listPageSize) as unknown as Lesson[],
 		stories,
-		storiesWithoutImages: (storiesWithoutImagesResult.data ?? []).map(mapStory),
+		storiesWithoutImages: missingStories,
 		availableImages,
-		backups: [],
+		hasMoreAvailableImages,
+		nextImagePageToken,
+		imagePageToken,
 		gcsError,
 		mathSettings: (mathSettingsResult.data ?? []).map(mapMathSettings),
-		mathStats: groupMathStats(mathAttemptsResult.data ?? []),
-		spellingWords: (spellingWordsResult.data ?? []) as unknown as SpellingWord[],
-		spellingStats: groupSpellingStats(spellingAttemptsResult.data ?? [])
+		mathStats: practiceSummaryResult.data.mathStats as MathSessionSummary[],
+		mathAttemptCount: Number(practiceSummaryResult.data.mathAttemptCount),
+		spellingAttemptCount: Number(practiceSummaryResult.data.spellingAttemptCount),
+		spellingWords: (spellingWordsResult.data ?? []).slice(
+			0,
+			listPageSize
+		) as unknown as SpellingWord[],
+		spellingStats: practiceSummaryResult.data.spellingStats as SpellingSessionSummary[],
+		catalogCounts: {
+			storyCount: Number(catalogCounts?.storyCount),
+			lessonCount: Number(catalogCounts?.lessonCount),
+			spellingWordCount: Number(catalogCounts?.spellingWordCount)
+		},
+		adminPages: {
+			story: storyAdminPage,
+			storyHasMore: (storiesResult.data?.length ?? 0) > storyPageSize,
+			missingStory: missingStoryPage,
+			missingStoryHasMore: (storiesWithoutImagesResult.data?.length ?? 0) > storyPageSize,
+			lesson: lessonPage,
+			lessonHasMore: (lessonsResult.data?.length ?? 0) > listPageSize,
+			word: wordPage,
+			wordHasMore: (spellingWordsResult.data?.length ?? 0) > listPageSize
+		},
+		adminFocus:
+			requestedTab ??
+			(storyAdminPage > 1 || missingStoryPage > 1 || imagePageToken
+				? 'status'
+				: wordPage > 1
+					? 'spelling'
+					: 'kids'),
+		storyJobRequestKeys: {
+			fromImage: randomUUID(),
+			regenerate: Object.fromEntries(stories.map((story) => [String(story.id), randomUUID()]))
+		}
 	};
 };
+
+function jobFailure(cause: unknown) {
+	const known = storyJobFailure(cause, 'message');
+	if (known) return fail(known.status, known.body);
+	console.error('story.job.admin.accept.failed');
+	return fail(503, { message: 'Story generation is temporarily unavailable. Please try again.' });
+}
 
 export const actions: Actions = {
 	addUser: async ({ request }) => {
 		const data = await request.formData();
-		const name = String(data.get('name') ?? '').trim();
-		const grade = String(data.get('grade') ?? '').trim();
-		const gender = String(data.get('gender') ?? '').trim();
-		const characterDescription = String(data.get('characterDescription') ?? '').trim() || null;
-		const storyThemes = data.getAll('storyThemes').map(String);
-		const storyLengthMinutes = Number(data.get('storyLengthMinutes') ?? 5);
-
-		if (!name || !grade || (gender !== 'boy' && gender !== 'girl')) {
-			return fail(400, { message: 'Name, grade, and gender are required.' });
-		}
+		const parsed = parseProfile(data);
+		if (!parsed.success)
+			return fail(400, {
+				message:
+					'Use a name of 1–120 characters, a supported grade, and a 3, 5, 8, or 10-minute story length. Descriptions may contain up to 2,000 characters.'
+			});
 
 		const supabase = await getSupabase();
-		const { error } = await supabase.from('child_profiles').insert({
-			name,
-			grade,
-			gender,
-			character_description: characterDescription,
-			story_themes: storyThemes.length > 0 ? storyThemes : ['space'],
-			story_length_minutes: Number.isFinite(storyLengthMinutes) ? storyLengthMinutes : 5
-		});
+		const { error } = await supabase.from('child_profiles').insert(parsed.data);
 		if (error) throw error;
 
 		return { success: true };
@@ -258,30 +284,15 @@ export const actions: Actions = {
 
 	saveChildSettings: async ({ request }) => {
 		const data = await request.formData();
-		const id = Number(data.get('id'));
-		const name = String(data.get('name') ?? '').trim();
-		const grade = String(data.get('grade') ?? '').trim();
-		const gender = String(data.get('gender') ?? '').trim();
-		const characterDescription = String(data.get('characterDescription') ?? '').trim() || null;
-		const storyThemes = data.getAll('storyThemes').map(String);
-		const storyLengthMinutes = Number(data.get('storyLengthMinutes') ?? 5);
+		const id = parseId(data.get('id'));
+		const parsed = parseProfile(data);
 
-		if (!id || !name || !grade || (gender !== 'boy' && gender !== 'girl')) {
+		if (!id || !parsed.success) {
 			return fail(400, { message: 'Valid child profile fields are required.' });
 		}
 
 		const supabase = await getSupabase();
-		const { error } = await supabase
-			.from('child_profiles')
-			.update({
-				name,
-				grade,
-				gender,
-				character_description: characterDescription,
-				story_themes: storyThemes.length > 0 ? storyThemes : ['space'],
-				story_length_minutes: Number.isFinite(storyLengthMinutes) ? storyLengthMinutes : 5
-			})
-			.eq('id', id);
+		const { error } = await supabase.from('child_profiles').update(parsed.data).eq('id', id);
 		if (error) throw error;
 
 		return { success: true };
@@ -289,11 +300,12 @@ export const actions: Actions = {
 
 	deleteUser: async ({ request }) => {
 		const data = await request.formData();
+		const id = parseId(data.get('id'));
+		if (!id) return fail(400, { message: 'Choose a valid child profile.' });
 		const supabase = await getSupabase();
-		const { error } = await supabase
-			.from('child_profiles')
-			.delete()
-			.eq('id', Number(data.get('id')));
+		const { error } = await supabase.from('child_profiles').delete().eq('id', id);
+		const maintenanceFailure = imageMaintenanceFailure(error);
+		if (maintenanceFailure) return maintenanceFailure;
 		if (error) throw error;
 		return { success: true };
 	},
@@ -302,8 +314,8 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const lesson = String(data.get('lesson') ?? '').trim();
 
-		if (!lesson) {
-			return fail(400, { message: 'Lesson text is required.' });
+		if (!lesson || lesson.length > 1000) {
+			return fail(400, { message: 'Use lesson text of 1–1,000 characters.' });
 		}
 
 		const supabase = await getSupabase();
@@ -314,127 +326,82 @@ export const actions: Actions = {
 
 	deleteLesson: async ({ request }) => {
 		const data = await request.formData();
+		const id = parseId(data.get('id'));
+		if (!id) return fail(400, { message: 'Choose a valid lesson.' });
 		const supabase = await getSupabase();
-		const { error } = await supabase
-			.from('lessons')
-			.delete()
-			.eq('id', Number(data.get('id')));
+		const { error } = await supabase.from('lessons').delete().eq('id', id);
 		if (error) throw error;
 		return { success: true };
 	},
 
 	deleteStory: async ({ request }) => {
 		const data = await request.formData();
-		const storyId = Number(data.get('id'));
+		const storyId = parseId(data.get('id'));
 
 		if (!storyId) {
 			return fail(400, { message: 'Story ID is required.' });
 		}
 
 		const supabase = await getSupabase();
-		const { data: storyRow, error: lookupError } = await supabase
-			.from('stories')
-			.select('id, image_url, image_object_name')
-			.eq('id', storyId)
-			.single();
-		if (lookupError) throw lookupError;
-		if (!storyRow) return fail(404, { message: `Story #${storyId} was not found.` });
-
 		const { error } = await supabase.from('stories').delete().eq('id', storyId);
+		const maintenanceFailure = imageMaintenanceFailure(error);
+		if (maintenanceFailure) return maintenanceFailure;
 		if (error) throw error;
-
-		const imageObjectName =
-			storyRow.image_object_name ?? objectNameFromGcsUrl(storyRow.image_url ?? '');
-		if (imageObjectName) {
-			try {
-				await deleteStoryImageObject(imageObjectName);
-			} catch (storageError) {
-				console.error(
-					`Deleted story #${storyId} but failed to delete image ${imageObjectName}:`,
-					storageError
-				);
-			}
-		}
-
-		return { success: true };
+		return {
+			success: true,
+			message: 'Story deleted. Unused illustrations will be removed by scheduled maintenance.'
+		};
 	},
 
 	assignImageToStory: async ({ request }) => {
 		const data = await request.formData();
-		const storyId = Number(data.get('storyId'));
+		const storyId = parseId(data.get('storyId'));
 		const imageUrl = String(data.get('imageUrl') ?? '');
 		const imageObjectName =
 			String(data.get('imageObjectName') ?? '').trim() || objectNameFromGcsUrl(imageUrl);
 
-		if (!storyId || !imageUrl) {
+		if (!storyId || !imageObjectName) {
 			return fail(400, { message: 'Story ID and image URL are required.' });
 		}
+		try {
+			assertStoryImageObject(imageObjectName);
+		} catch {
+			return fail(400, { message: 'Choose a valid story image from the library.' });
+		}
+		const deliveryUrl = await getSignedImageUrl(imageObjectName);
 
 		const supabase = await getSupabase();
 		const { error } = await supabase
 			.from('stories')
-			.update({ image_url: imageUrl, image_object_name: imageObjectName })
+			.update({ image_url: deliveryUrl, image_object_name: imageObjectName })
 			.eq('id', storyId);
+		const maintenanceFailure = imageMaintenanceFailure(error);
+		if (maintenanceFailure) return maintenanceFailure;
 		if (error) throw error;
 
 		return { success: true, message: `Image successfully assigned to story #${storyId}`, storyId };
 	},
 
-	regenerateStoryImage: async ({ request }) => {
-		const data = await request.formData();
-		const storyId = Number(data.get('storyId'));
+	regenerateStoryImage: async (event) => {
+		const data = await event.request.formData();
+		const storyId = parseId(data.get('storyId'));
 
 		if (!storyId) {
 			return fail(400, { message: 'Story ID is required.' });
 		}
 
 		try {
-			const supabase = await getSupabase();
-			const { data: storyRow, error: storyError } = await supabase
-				.from('stories')
-				.select('*')
-				.eq('id', storyId)
-				.single();
-			if (storyError) throwSupabaseError('loading story for image regeneration', storyError);
-			if (!storyRow) return fail(404, { message: `Story #${storyId} was not found.` });
-
-			const storedImage = await generateAndUploadStoryImage(mapStory(storyRow));
-			const { error: updateError } = await supabase
-				.from('stories')
-				.update({
-					image_url: storedImage.imageUrl,
-					image_object_name: storedImage.imageObjectName
-				})
-				.eq('id', storyId);
-			if (updateError) throwSupabaseError('saving regenerated story image', updateError);
-
-			return {
-				success: true,
-				message: `Regenerated image for story #${storyId}.`,
+			const job = await enqueueStoryJob(event, {
+				key: String(data.get('requestKey') ?? ''),
+				kind: 'regenerate_image',
 				storyId,
-				imageUrl: storedImage.imageUrl
-			};
-		} catch (error) {
-			console.error('Failed to regenerate story image:', error);
-			return fail(error instanceof Error && error.name === 'SupabaseConnectionError' ? 503 : 500, {
-				message:
-					error instanceof Error && error.name === 'SupabaseConnectionError'
-						? getSupabaseErrorMessage(error)
-						: 'Failed to regenerate story image.'
+				input: {}
 			});
+			throw redirect(303, `/story-jobs/${job.id}`);
+		} catch (cause) {
+			if (isRedirect(cause)) throw cause;
+			return jobFailure(cause);
 		}
-	},
-
-	backupDatabase: async () => {
-		return fail(400, {
-			message: 'Manual SQLite backups are disabled because the app now uses Supabase.'
-		});
-	},
-
-	restoreDatabase: async () => {
-		return fail(400, {
-			message: 'SQLite restore is disabled because the app now uses Supabase.'
-		});
 	},
 
 	saveMathSettings,
@@ -446,8 +413,13 @@ export const actions: Actions = {
 			.toLowerCase();
 		const grade = String(data.get('grade') ?? '').trim();
 
-		if (!word || !grade) {
-			return fail(400, { message: 'Word and grade are required.' });
+		if (
+			!word ||
+			word.length > 80 ||
+			!/^[\p{L}\p{M}' -]+$/u.test(word) ||
+			!gradeSchema.safeParse(grade).success
+		) {
+			return fail(400, { message: 'Use a word of 1–80 characters and a supported grade.' });
 		}
 
 		const supabase = await getSupabase();
@@ -461,7 +433,7 @@ export const actions: Actions = {
 
 		if (!existing) {
 			const { error } = await supabase.from('spelling_words').insert({ word, grade });
-			if (error) throw error;
+			if (error && error.code !== '23505') throw error;
 		}
 
 		return { success: true };
@@ -469,11 +441,10 @@ export const actions: Actions = {
 
 	deleteSpellingWord: async ({ request }) => {
 		const data = await request.formData();
+		const id = parseId(data.get('id'));
+		if (!id) return fail(400, { message: 'Choose a valid spelling word.' });
 		const supabase = await getSupabase();
-		const { error } = await supabase
-			.from('spelling_words')
-			.delete()
-			.eq('id', Number(data.get('id')));
+		const { error } = await supabase.from('spelling_words').delete().eq('id', id);
 		if (error) throw error;
 		return { success: true };
 	},
@@ -487,40 +458,44 @@ export const actions: Actions = {
 
 	clearMathStats,
 
-	createStoryFromImage: async ({ request }) => {
-		const data = await request.formData();
+	createStoryFromImage: async (event) => {
+		const data = await event.request.formData();
 		const imageUrl = String(data.get('imageUrl') ?? '');
 		const imageObjectName =
 			String(data.get('imageObjectName') ?? '').trim() || objectNameFromGcsUrl(imageUrl);
 		const prompt = String(data.get('prompt') ?? '').trim();
 
-		if (!imageUrl || !prompt) {
-			return fail(400, { message: 'Image URL and prompt are required.' });
+		if (!imageObjectName || !prompt || prompt.length > 4000) {
+			return fail(400, { message: 'Choose an image and use a story idea of 1–4,000 characters.' });
+		}
+		try {
+			assertStoryImageObject(imageObjectName);
+		} catch {
+			return fail(400, { message: 'Choose a valid story image from the library.' });
 		}
 
 		try {
-			const { buffer: imageBuffer } = await downloadImageFromGcsUrl(imageUrl);
-			const completePrompt = `Create a short, exciting, and creative story for a young reader based on the following idea: "${prompt}". The story should be about 5 minutes to read and include a positive life lesson. At the very beginning, on a new line, write a short, simple sentence describing the main scene for an illustration.`;
-			const storyContent = await generateStoryText(completePrompt, imageBuffer);
-			const supabase = await getSupabase();
-			const { data: story, error } = await supabase
-				.from('stories')
-				.insert({
-					prompt,
-					content: storyContent,
-					image_url: imageUrl,
-					image_object_name: imageObjectName,
-					grade_level: '1'
-				})
-				.select('id')
-				.single();
-			if (error) throw error;
+			const job = await enqueueStoryJob(event, {
+				key: String(data.get('requestKey') ?? ''),
+				kind: 'from_image',
+				input: { prompt, source_object: imageObjectName }
+			});
+			throw redirect(303, `/story-jobs/${job.id}`);
+		} catch (cause) {
+			if (isRedirect(cause)) throw cause;
+			return jobFailure(cause);
+		}
+	},
 
-			throw redirect(303, `/story/${story.id}`);
-		} catch (error) {
-			if (isRedirect(error)) throw error;
-			console.error('Failed to create story from image:', error);
-			return fail(500, { message: 'Failed to create story from image.' });
+	recoverStoryJob: async (event) => {
+		const data = await event.request.formData();
+		try {
+			const jobId = await recoverAcceptedStoryJob(event, String(data.get('requestKey') ?? ''));
+			if (!jobId) return fail(404, { message: 'No accepted story request was found.' });
+			throw redirect(303, `/story-jobs/${jobId}`);
+		} catch (cause) {
+			if (isRedirect(cause)) throw cause;
+			return jobFailure(cause);
 		}
 	}
 };

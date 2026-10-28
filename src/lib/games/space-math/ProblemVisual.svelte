@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Problem } from '$lib/math';
+	import type { Problem } from '#lib/math';
 	export let problem: Problem;
 	export let showHint = false;
 	$: hour = Number(problem.state.hour ?? 12);

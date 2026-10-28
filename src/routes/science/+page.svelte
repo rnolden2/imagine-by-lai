@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { tick } from 'svelte';
-	import Constellation from '$lib/science/Constellation.svelte';
-	import { subjects, subjectById, conceptById } from '$lib/science/taxonomy';
-	import { emptyFilters, matches, related } from '$lib/science/graph';
+	import Constellation from '#lib/science/Constellation.svelte';
+	import { subjects, subjectById, conceptById } from '#lib/science/taxonomy';
+	import { emptyFilters, matches, related } from '#lib/science/graph';
 	let { data }: { data: PageData } = $props();
 	let filters = $state({ ...emptyFilters });
 	let selectedId = $state<string | null>(null);
@@ -353,7 +353,13 @@
 		background: #0a111d;
 		color: #e9eff7;
 		min-height: calc(100vh - 60px);
-		font-family: 'Nunito', sans-serif;
+		font-family:
+			ui-rounded,
+			system-ui,
+			-apple-system,
+			BlinkMacSystemFont,
+			'Segoe UI',
+			sans-serif;
 	}
 	.science-shell {
 		max-width: 1510px;

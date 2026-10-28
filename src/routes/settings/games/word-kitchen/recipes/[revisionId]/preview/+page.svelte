@@ -16,7 +16,8 @@
 			const r = await fetch(preview ? '/api/games/word-kitchen/start' : '/api/settings/games', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
+				body: JSON.stringify(body),
+				signal: AbortSignal.timeout(15_000)
 			});
 			const b = await r.json();
 			if (!r.ok) throw new Error(b.message ?? 'Could not save.');
@@ -184,8 +185,10 @@
 		>{/if}{#if data.owner?.origin === 'generated' && !data.owner.archived_at}<button
 			class="mt-5 ml-4 rounded-xl border px-5 py-3"
 			disabled={busy}
-			onclick={() => request({ action: 'archive', recipeId: data.revision.recipe_id })}
-			>Archive recipe</button
+			onclick={() => {
+				if (confirm('Archive this recipe? Children will no longer be able to start it.'))
+					void request({ action: 'archive', recipeId: data.revision.recipe_id });
+			}}>Archive recipe</button
 		>{/if}
 	<p role="status" class="mt-4">{message}</p>
 </section>

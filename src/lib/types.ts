@@ -34,7 +34,7 @@ export interface MathSettings {
 	child_id: number; // Renamed from user_id
 	user_id?: number; // Backwards compatibility alias
 	operations: string[]; // postgres text[] array (addition, subtraction, etc.)
-	config: Record<string, any>; // JSONB config for range, fractions, clocks, etc.
+	config: Record<string, unknown>; // JSONB config is validated before use.
 	updated_at: string;
 }
 
@@ -44,7 +44,7 @@ export interface MathAttempt {
 	user_id?: number | null; // Backwards compatibility alias
 	session_id: string;
 	operation: string;
-	problem_state: Record<string, any>; // JSONB problem details (numbers, numerator, hour, etc.)
+	problem_state: Record<string, unknown>; // JSONB problem details are validated before use.
 	correct_answer: string;
 	given_answer: string;
 	is_correct: boolean;
@@ -52,6 +52,7 @@ export interface MathAttempt {
 }
 
 export interface MathSessionSummary {
+	child_id: number | null;
 	child_name: string | null; // Renamed from user_name
 	user_name?: string | null; // Backwards compatibility alias
 	session_id: string;
@@ -79,6 +80,7 @@ export interface SpellingAttempt {
 }
 
 export interface SpellingSessionSummary {
+	child_id: number | null;
 	child_name: string | null; // Renamed from user_name
 	user_name?: string | null; // Backwards compatibility alias
 	session_id: string;

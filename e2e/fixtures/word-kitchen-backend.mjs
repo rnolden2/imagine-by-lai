@@ -8,10 +8,18 @@ process.env.GCS_BUCKET_NAME = '';
 export const db = await createTestDatabase();
 if (process.env.WORD_KITCHEN_BROWSER_QUOTA_TEST === '1') {
 	// Exhaust the daily allowance without making paid provider requests.
-	await db.exec(`insert into game_generation_jobs(id,child_id,idempotency_key,request_hash,input,status)
-	 select gen_random_uuid(),1,gen_random_uuid(),'quota-fixture',
-	 jsonb_build_object('favoriteName','Quota fixture '||n),'failed'
-	 from generate_series(1,5) n;`);
+	await db.exec(`with fixture as materialized (
+	 select gen_random_uuid() id,1::bigint child_id,gen_random_uuid() idempotency_key,
+	 'quota-fixture-'||n request_hash,jsonb_build_object('favoriteName','Quota fixture '||n) input
+	 from generate_series(1,5) n
+	), requests as (
+	 insert into game_generation_requests(id,child_id,idempotency_key,request_hash)
+	 select id,child_id,idempotency_key,request_hash from fixture returning id
+	)
+	insert into game_generation_jobs(id,child_id,idempotency_key,request_hash,input,status,error_code)
+	select f.id,f.child_id,f.idempotency_key,f.request_hash,f.input,'failed',
+	 case when f.input->>'favoriteName'='Quota fixture 1' then 'AI_PROVIDERS_FAILED' end
+	from fixture f join requests r using(id);`);
 }
 const seed = JSON.parse(await fs.readFile('resources/word-kitchen/seed.json', 'utf8'));
 for (const c of seed.concepts)
@@ -101,8 +109,18 @@ globalThis.fetch = async (input, init) => {
 	const name = url.pathname.split('/').pop() ?? '';
 	try {
 		if (url.pathname.includes('/rpc/')) {
-			if (!name.startsWith('wk_')) throw new Error('Unsupported RPC');
+			if (
+				!name.startsWith('wk_') &&
+				!['app_practice_summaries', 'app_record_practice', 'app_admin_catalog_counts'].includes(
+					name
+				)
+			)
+				throw new Error('Unsupported RPC');
 			const body = await request.json();
+			if (name === 'wk_parent_point_totals') {
+				const result = await db.query('select * from wk_parent_point_totals()');
+				return response(result.rows);
+			}
 			const entries = Object.entries(body);
 			const result = await db.query(
 				`select ${ident(name)}(${entries.map(([key], i) => `${ident(key)}=>$${i + 1}`).join(',')}) result`,
@@ -118,7 +136,24 @@ globalThis.fetch = async (input, init) => {
 		const conditions = [];
 		for (const [key, value] of url.searchParams) {
 			if (['select', 'order', 'limit', 'offset', 'on_conflict'].includes(key)) continue;
+			if (key === 'or' && value === '(image_url.is.null,image_url.eq.)') {
+				conditions.push("(image_url is null or image_url='')");
+				continue;
+			}
+			if (
+				key === 'or' &&
+				value === '(image_object_name.not.is.null,and(image_url.not.is.null,image_url.neq.))'
+			) {
+				conditions.push(
+					"(image_object_name is not null or (image_url is not null and image_url<>''))"
+				);
+				continue;
+			}
 			const column = ident(key);
+			if (value === 'not.is.null') {
+				conditions.push(`${column} is not null`);
+				continue;
+			}
 			const dot = value.indexOf('.');
 			const op = value.slice(0, dot);
 			const raw = value.slice(dot + 1);

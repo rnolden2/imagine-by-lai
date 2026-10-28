@@ -7,6 +7,7 @@ export default defineConfig({
 	timeout: 120000,
 	use: {
 		baseURL: 'http://localhost:4176',
+		extraHTTPHeaders: { 'x-forwarded-proto': 'http' },
 		browserName: 'chromium',
 		channel:
 			process.env.PLAYWRIGHT_CHANNEL ??
@@ -28,7 +29,7 @@ export default defineConfig({
 			WORD_KITCHEN_BROWSER_SHARED_TEST: '1',
 			HOST: 'localhost',
 			PORT: '4176',
-			ORIGIN: 'http://localhost:4176',
+			PROTOCOL_HEADER: 'x-forwarded-proto',
 			ADMIN_PASSWORD: 'kitchen-browser-test-password',
 			SUPABASE_URL: 'https://kitchen-tests.supabase.co',
 			SUPABASE_SERVICE_ROLE_KEY: 'kitchen-browser-test-server-key-never-use-in-production'

@@ -24,7 +24,8 @@
 			const r = await fetch('/api/games/word-kitchen/start', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ childId: selected, revisionId, duration, key: startKey })
+				body: JSON.stringify({ childId: selected, revisionId, duration, key: startKey }),
+				signal: AbortSignal.timeout(15_000)
 			});
 			const b = await r.json();
 			if (!r.ok) throw new Error(b.message ?? 'Could not start. Please try again.');

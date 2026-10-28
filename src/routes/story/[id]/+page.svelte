@@ -1,15 +1,16 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { PageData } from './$types';
-	import { onMount } from 'svelte';
-	import { marked } from 'marked';
+	import { onDestroy, onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import ReadingGuideLine from '$lib/components/ReadingGuideLine.svelte';
-	import { speak } from '$lib/tts';
+	import ReadingGuideLine from '#lib/components/ReadingGuideLine.svelte';
+	import { speak } from '#lib/tts';
 
 	export let data: PageData;
 
-	const storyHtml = marked(data.story.content);
+	$: storyHtml = data.storyHtml;
 	let showBanner = true;
+	let bannerTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let selectedWord: string | null = null;
 	let wordData: { phonetic: string; definition: string } | null = null;
@@ -18,20 +19,30 @@
 	const definitionCache: Record<string, { phonetic: string; definition: string }> = {};
 
 	let storyContentElement: HTMLElement;
+	let lookupInputElement: HTMLInputElement;
+	let lookupButtonElement: HTMLButtonElement;
+	let lookupWord = '';
+	let lookupError = '';
 	let lineHeight = 0;
 	let guidePosition = { top: 0, visible: false };
-	let longPressTimer: NodeJS.Timeout | null = null;
+	let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	let definitionRequest = 0;
 	let isLongPress = false;
 	let touchStartPos = { x: 0, y: 0 };
 	const LONG_PRESS_DURATION = 500; // 500ms for long press
 	const MOVE_THRESHOLD = 10; // pixels allowed to move during long press
 
 	onMount(() => {
-		setTimeout(() => (showBanner = false), 3000);
+		bannerTimer = setTimeout(() => (showBanner = false), 3000);
 		if (storyContentElement) {
 			const style = window.getComputedStyle(storyContentElement);
 			lineHeight = parseFloat(style.lineHeight);
 		}
+	});
+	onDestroy(() => {
+		if (bannerTimer) clearTimeout(bannerTimer);
+		if (longPressTimer) clearTimeout(longPressTimer);
+		definitionRequest++;
 	});
 
 	function handleReadingGuideClick(event: MouseEvent) {
@@ -44,6 +55,18 @@
 
 		guidePosition = {
 			top: newTop,
+			visible: true
+		};
+	}
+
+	function moveReadingGuide(lines: number) {
+		if (!lineHeight || !storyContentElement) return;
+		const maximum = Math.max(0, storyContentElement.scrollHeight - lineHeight);
+		guidePosition = {
+			top: Math.max(
+				0,
+				Math.min(maximum, (guidePosition.visible ? guidePosition.top : 0) + lines * lineHeight)
+			),
 			visible: true
 		};
 	}
@@ -152,16 +175,16 @@
 			const offset = range.startOffset;
 			const clickedChar = text[offset] || text[offset - 1];
 
-			if (clickedChar && clickedChar.match(/\w/)) {
+			if (clickedChar && clickedChar.match(/[\p{L}\p{M}'-]/u)) {
 				const wordRange = document.createRange();
 
 				let start = offset;
-				while (start > 0 && text[start - 1].match(/\w/)) {
+				while (start > 0 && text[start - 1].match(/[\p{L}\p{M}'-]/u)) {
 					start--;
 				}
 
 				let end = offset;
-				while (end < text.length && text[end].match(/\w/)) {
+				while (end < text.length && text[end].match(/[\p{L}\p{M}'-]/u)) {
 					end++;
 				}
 
@@ -180,6 +203,7 @@
 	async function handleWordSelection(word: string, rect: DOMRect) {
 		const cleanWord = word.trim().replace(/[.,!?;:]$/, '');
 		if (!cleanWord) return;
+		const request = ++definitionRequest;
 
 		selectedWord = cleanWord;
 		isLoading = true;
@@ -223,33 +247,71 @@
 
 		// Check cache first
 		if (definitionCache[cleanWord]) {
-			wordData = definitionCache[cleanWord];
-			isLoading = false;
+			if (request === definitionRequest) {
+				wordData = definitionCache[cleanWord];
+				isLoading = false;
+			}
 			return;
 		}
 
 		try {
-			const response = await fetch(`/api/define?word=${cleanWord}`);
+			const query = new URLSearchParams({ word: cleanWord });
+			const response = await fetch(`/api/define?${query}`, {
+				signal: AbortSignal.timeout(35_000)
+			});
 			if (response.ok) {
-				const data = await response.json();
-				wordData = data;
-				definitionCache[cleanWord] = data; // Save to cache
+				const definition = (await response.json()) as {
+					phonetic?: unknown;
+					definition?: unknown;
+				};
+				if (
+					typeof definition.phonetic === 'string' &&
+					typeof definition.definition === 'string' &&
+					definition.phonetic.trim().length > 0 &&
+					definition.phonetic.trim().length <= 160 &&
+					definition.definition.trim().length > 0 &&
+					definition.definition.trim().length <= 1000
+				) {
+					const value = {
+						phonetic: definition.phonetic.trim(),
+						definition: definition.definition.trim()
+					};
+					definitionCache[cleanWord] = value;
+					if (request === definitionRequest) wordData = value;
+				}
 			}
-		} catch (error) {
-			console.error('Failed to fetch definition:', error);
+		} catch {
+			if (request === definitionRequest) console.warn('story.definition.failed');
 		} finally {
-			isLoading = false;
+			if (request === definitionRequest) isLoading = false;
 		}
 	}
 
 	function closePopup() {
+		definitionRequest++;
 		selectedWord = null;
 		wordData = null;
+		isLoading = false;
+		lookupInputElement?.focus();
+	}
+
+	function lookupDefinition() {
+		const word = lookupWord.trim();
+		if (!word || word.length > 80 || !/^[\p{L}\p{M}' -]+$/u.test(word)) {
+			lookupError = 'Enter one word or short phrase using letters.';
+			return;
+		}
+		lookupError = '';
+		void handleWordSelection(word, lookupButtonElement.getBoundingClientRect());
 	}
 </script>
 
+<svelte:head><title>Your Story · Imaginations By Lai</title></svelte:head>
+
 {#if showBanner}
 	<div
+		role="status"
+		aria-live="polite"
 		transition:fade={{ duration: 400 }}
 		class="bg-primary fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-2xl px-8 py-4 text-lg font-bold text-black shadow-xl"
 	>
@@ -260,16 +322,23 @@
 <div class="min-h-screen bg-gray-50">
 	<div class="container mx-auto px-4 py-8">
 		<div class="mx-auto max-w-4xl overflow-hidden rounded-lg bg-white shadow-lg">
-			<img
-				src={data.story.image_url}
-				alt="Story illustration"
-				class="h-72 w-full object-cover md:h-96"
-			/>
+			{#if data.story.image_url}
+				<img
+					src={data.story.image_url}
+					alt="Story illustration"
+					class="h-72 w-full object-cover md:h-96"
+				/>
+			{:else}
+				<p class="bg-indigo-50 px-8 py-4 text-indigo-900">
+					The illustration is unavailable. Your story is ready to read below.
+				</p>
+			{/if}
 			<div class="p-8 md:p-12">
 				<h1 class="mb-4 text-3xl font-bold text-gray-900 md:text-4xl">Your New Story</h1>
-				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
+				<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 				<div
+					role="region"
+					aria-label="Story text. Tap a line to place the reading guide."
 					class="prose prose-lg relative max-w-none text-2xl leading-relaxed text-gray-700"
 					on:mousedown={handleMouseDown}
 					on:mouseup={handleMouseUp}
@@ -285,11 +354,54 @@
 						height={lineHeight}
 						visible={guidePosition.visible}
 					/>
+					<!-- Sanitized on the server by renderStoryMarkdown. -->
+					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 					{@html storyHtml}
+				</div>
+				<div class="mt-6 rounded-xl bg-indigo-50 p-4 text-indigo-950">
+					<p class="font-semibold">Reading tools</p>
+					<div class="mt-3 flex flex-wrap gap-2" aria-label="Reading guide controls">
+						<button
+							class="rounded-lg bg-white px-4 py-2 font-semibold shadow"
+							on:click={() => moveReadingGuide(-1)}>Guide up</button
+						>
+						<button
+							class="rounded-lg bg-white px-4 py-2 font-semibold shadow"
+							on:click={() => moveReadingGuide(1)}>Guide down</button
+						>
+						<button
+							class="rounded-lg bg-white px-4 py-2 font-semibold shadow"
+							on:click={() => (guidePosition.visible = false)}>Hide guide</button
+						>
+					</div>
+					<form
+						class="mt-4 flex flex-wrap items-end gap-2"
+						on:submit|preventDefault={lookupDefinition}
+					>
+						<label
+							class="flex min-w-48 flex-1 flex-col gap-1 font-semibold"
+							for="story-word-lookup"
+						>
+							Look up a word from this story
+							<input
+								id="story-word-lookup"
+								bind:this={lookupInputElement}
+								bind:value={lookupWord}
+								maxlength="80"
+								class="rounded-lg border border-indigo-300 bg-white px-3 py-2 font-normal"
+							/>
+						</label>
+						<button
+							bind:this={lookupButtonElement}
+							class="bg-primary rounded-lg px-4 py-2 font-semibold text-black"
+							type="submit">Define word</button
+						>
+					</form>
+					{#if lookupError}<p role="alert" class="mt-2 text-sm text-red-700">{lookupError}</p>{/if}
 				</div>
 				<div class="mt-8 border-t pt-6">
 					<a
-						href="/"
+						href={resolve('/')}
 						class="bg-primary inline-block rounded-xl px-6 py-3 font-bold text-black shadow-md transition-opacity hover:opacity-90"
 						>Create Another Story</a
 					>
@@ -301,16 +413,20 @@
 
 {#if selectedWord}
 	<div
+		role="dialog"
+		aria-modal="false"
+		aria-labelledby="word-definition-title"
 		class="fixed w-64 rounded-lg border bg-white p-4 shadow-xl"
 		style="top: {popupPosition.top}px; left: {popupPosition.left}px;"
 	>
 		<button
+			aria-label="Close word definition"
 			class="absolute top-1 right-1 flex h-9 w-9 items-center justify-center rounded-full text-2xl text-gray-500 hover:bg-gray-100 hover:text-gray-800"
 			on:click={closePopup}>&times;</button
 		>
-		<h3 class="mb-2 text-lg font-bold">{selectedWord}</h3>
+		<h3 id="word-definition-title" class="mb-2 text-lg font-bold">{selectedWord}</h3>
 		{#if isLoading}
-			<p class="text-sm text-gray-600">Loading...</p>
+			<p role="status" class="text-sm text-gray-600">Loading...</p>
 		{:else if wordData}
 			<p class="mb-2 text-sm text-gray-600"><em>{wordData.phonetic}</em></p>
 			<p class="mb-3 text-sm">{wordData.definition}</p>

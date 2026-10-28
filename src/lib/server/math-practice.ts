@@ -1,16 +1,28 @@
-import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '$lib/server/db';
-import { error as kitError } from '@sveltejs/kit';
-import type { MathSettings, User } from '$lib/types';
+import { getSupabase, getSupabaseErrorMessage, throwSupabaseError } from '#lib/server/db';
+import { error as kitError, type RequestEvent } from '@sveltejs/kit';
+import type { MathSettings, User } from '#lib/types';
+import { access } from './games/authorization';
 
-export async function loadMathPractice() {
-	let usersResult: User[] | null = null;
+type PracticeUser = Pick<User, 'id' | 'name' | 'grade' | 'gender'>;
+
+export async function loadMathPractice(event: RequestEvent) {
+	const scope = await access(event);
+	let usersResult: PracticeUser[] | null = null;
 	let settingsResult: MathSettings[] | null = null;
 
 	try {
 		const supabase = await getSupabase();
 		const [usersResponse, settingsResponse] = await Promise.all([
-			supabase.from('child_profiles').select('*').order('name', { ascending: true }),
-			supabase.from('math_settings').select('*').order('child_id', { ascending: true })
+			supabase
+				.from('child_profiles')
+				.select('id,name,grade,gender')
+				.in('id', scope.childIds)
+				.order('name', { ascending: true }),
+			supabase
+				.from('math_settings')
+				.select('id,child_id,operations,config,updated_at')
+				.in('child_id', scope.childIds)
+				.order('child_id', { ascending: true })
 		]);
 
 		if (usersResponse.error) throwSupabaseError('loading child profiles', usersResponse.error);

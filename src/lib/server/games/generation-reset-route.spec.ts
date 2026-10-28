@@ -1,12 +1,12 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
-const mocks = vi.hoisted(() => ({ rpc: vi.fn() }));
-vi.mock('$lib/server/db', () => ({ getSupabase: async () => ({ rpc: mocks.rpc }) }));
-vi.mock('$lib/server/games/queue', () => ({ enqueueAndDispatchGeneration: vi.fn() }));
-vi.mock('$lib/server/games/generation', () => ({ generationPolicy: { dailyJobs: 5 } }));
-vi.mock('$lib/server/games/revisions', () => ({ reviseRecipe: vi.fn() }));
-vi.mock('$lib/server/games/authorization', () => ({
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), enqueue: vi.fn() }));
+vi.mock('#lib/server/db', () => ({ getSupabase: async () => ({ rpc: mocks.rpc }) }));
+vi.mock('#lib/server/games/queue', () => ({ enqueueAndDispatchGeneration: mocks.enqueue }));
+vi.mock('#lib/server/games/generation', () => ({ generationPolicy: { dailyJobs: 5 } }));
+vi.mock('#lib/server/games/revisions', () => ({ reviseRecipe: vi.fn() }));
+vi.mock('#lib/server/games/authorization', () => ({
 	authorizeDevice: vi.fn(),
 	requireChild: vi.fn()
 }));
@@ -51,4 +51,28 @@ it('requires a valid idempotency key', async () => {
 		POST(event({ action: 'reset_generation_limit', key: 'invalid' }))
 	).rejects.toMatchObject({ status: 400 });
 	expect(mocks.rpc).not.toHaveBeenCalled();
+});
+
+it('returns only the public job identity after accepting generation', async () => {
+	const key = randomUUID();
+	mocks.enqueue.mockResolvedValue({
+		id: '11111111-1111-4111-a111-111111111111',
+		status: 'queued',
+		child_id: 1,
+		request_hash: 'private-hash',
+		idempotency_key: key,
+		estimated_cost: 0.3,
+		actual_cost: 0,
+		checkpoint: { private: true },
+		lease_token: 4
+	});
+	const response = await POST(
+		event({ action: 'generate', childId: 1, favoriteId: randomUUID(), key })
+	);
+	expect(response.status).toBe(202);
+	expect(await response.json()).toEqual({
+		id: '11111111-1111-4111-a111-111111111111',
+		status: 'queued'
+	});
+	expect(mocks.enqueue).toHaveBeenCalledWith(1, expect.any(String), key);
 });

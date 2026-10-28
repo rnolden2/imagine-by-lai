@@ -21,12 +21,17 @@ I created this personal project for my daughter to help her complete her daily 1
 ### Parent dashboard
 
 Sign in at `/login` with the configured admin password to access `/settings`.
+Child profiles, stories, math, and spelling require a parent session or an
+authorized device. In Game settings, unlock only the children who use that device;
+locking parent settings preserves the device's child access. The science catalog
+contains no personal learning data and remains public.
 
 - Create and manage child profiles and story preferences.
 - Configure each child's math practice and manage spelling lists.
 - Review practice results and clear practice history.
 - Manage stories, regenerate illustrations, assign unused images to stories, and create stories from existing images.
-- Delete stories and their stored images.
+- Delete stories immediately; scheduled maintenance removes unused images safely
+  after a one-hour quarantine and preserves images referenced by other stories.
 
 ## Architecture
 
@@ -44,18 +49,54 @@ Sign in at `/login` with the configured admin password to access `/settings`.
 | Credentials       | Server environment variables or Google Secret Manager                    |
 | Parent login      | Admin password with a signed, expiring HTTP-only session cookie          |
 
-The model names above reflect the configuration in [ai.ts](src/lib/server/ai.ts). API credentials stay on the server. The app uses Supabase for persistence; legacy SQLite dependencies and Docker Compose volume mounts remain in the repository, but SQLite is no longer the application's database and manual SQLite backups are disabled.
+The model names above reflect the configuration in [ai.ts](src/lib/server/ai.ts).
+API credentials stay on the server. The app uses Supabase for persistence; SQLite
+dependencies have been removed and manual SQLite backups are disabled. Use the
+database backup and restore procedure verified for the deployed Supabase project.
 
 ## Local setup
 
 ### Prerequisites
 
-- Node.js 22.12 or newer in the Node 22 series, matching the Docker runtime major version, and npm.
+- Node.js 22.17 or newer in the Node 22 series, matching the Docker runtime major version, and npm.
 - A hosted Supabase project with the application's existing schema and a server-only service-role key.
 - An OpenAI API key in Google Secret Manager for the active text/image provider. Gemini credentials remain supported when switching back to Google AI.
 - A Google Cloud project and storage bucket, with credentials for storage, signed URLs, and Cloud Text-to-Speech. Secret Manager access is also needed if credentials are loaded from secrets.
 
-The repository does **not** currently include SQL migrations or a database bootstrap command. A new empty Supabase project is not sufficient. The application expects `child_profiles`, `stories`, `lessons`, `math_settings`, `math_attempts`, `spelling_words`, and `spelling_attempts`, including the columns and relationships used by the server queries. [Shared types](src/lib/types.ts) and [server routes](src/routes) describe the expected data, but are not a replacement for the database schema.
+An empty database starts with [supabase/bootstrap.sql](supabase/bootstrap.sql),
+followed by every versioned migration in `supabase/migrations` in filename order.
+The bootstrap deliberately refuses to run over existing core tables. Existing
+installations apply migrations only, after backing up and reviewing the upgrade.
+Core authentication also uses the shared rate-limit/device tables, so feature flags
+do not make those migrations optional. See the
+[release gates](docs/production-readiness.md) and
+[migration and image-cleanup procedure](docs/production-operations.md).
+
+### Verify without cloud credentials
+
+```sh
+npm run verify:isolated -- --fresh-install --quality --build --unit --browser --database --keep
+```
+
+This installs the lockfile in a temporary copy, checks formatting, lint, and types,
+and runs the unit, browser, and independent-connection PostgreSQL suites against
+isolated fixtures. It excludes local environment files and credential files and
+does not inherit the shell's environment.
+On macOS it uses an installed Google Chrome; elsewhere add `--install-browser` to
+install Playwright Chromium into the temporary workspace. Linux browser system
+dependencies must be installed separately, as shown in the CI workflow.
+Omit `--fresh-install` to reuse the installed dependencies. `--keep` retains logs
+and browser artifacts in the printed temporary workspace.
+
+With PostgreSQL 16 or 17 installed locally, add `--database` to also run the story
+concurrency checks, or run `npm run test:db:stories` on its own. These checks create
+a disposable cluster under `/tmp` with a private Unix socket and no TCP listener.
+They use independent database connections, stop the cluster afterward, and never
+connect to an existing database. The CI workflow includes this check on Ubuntu 24.04.
+
+Passing these checks does not verify live provider access, production migrations,
+backups, or deployment permissions. The [readiness ledger](docs/production-readiness.md)
+records remaining work; production readiness has not been established.
 
 ### Install and configure
 
@@ -105,7 +146,10 @@ The credential identity must have access to the configured services and bucket, 
 | `OPENAI_TEXT_MODEL`  | `gpt-5.1`       | OpenAI Responses API model for stories, image understanding, and definitions. |
 | `OPENAI_IMAGE_MODEL` | `gpt-image-1.5` | GPT Image model for 1024×1024 PNG illustrations at medium quality.            |
 
-Gemini mode uses `gemini-2.5-pro` for text/definitions and `gemini-2.5-flash-image` for illustrations. Provider switching is explicit: errors do not silently send requests to the other provider. OpenAI requests use bounded timeouts and no automatic SDK retries. Image failures retain the existing story-recovery behavior.
+Gemini mode uses `gemini-2.5-pro` for text/definitions and `gemini-2.5-flash-image`
+for illustrations. With OpenAI selected, a failed request can use the single Gemini
+fallback described above. OpenAI requests use bounded timeouts and no automatic
+SDK retries. Image failures retain the existing story-recovery behavior.
 
 The OpenAI SDK and Secret Manager key integration are shared across these operations. See the [OpenAI image generation guide](https://developers.openai.com/api/docs/guides/image-generation) for API requirements. Google Cloud Storage and Cloud Text-to-Speech remain in use. Word Kitchen reserves a separate allowance before each Gemini fallback and records the actual image provider in asset provenance. If both providers fail, the job stops with `AI_PROVIDERS_FAILED`. Provider attempts share an overall timeout: OpenAI gets half, and Gemini gets the remaining time. A timed-out primary request may still be billed.
 
@@ -147,15 +191,27 @@ npx playwright install chromium
 | `npm run test:e2e:math`                       | Run the isolated math-settings regression suite.                  |
 | `npm test`                                    | Run unit tests followed by the default end-to-end suite.          |
 
-The default end-to-end suite uses the app's configured backend. The math-settings suite uses an in-memory backend fixture and test credentials; it does not access live Supabase. It is separate from `npm test` and does not verify a deployed database's schema or permissions. See the [math regression test guide](e2e/README.md) for details and the installed-Chrome option.
+The named end-to-end suites use isolated fixture backends and test credentials;
+none access live Supabase. They verify production builds but do not establish a
+deployed database's schema, IAM, or service permissions. See the
+[math regression test guide](e2e/README.md) for details and the installed-Chrome
+option.
 
 ## Deployment
 
-The [Dockerfile](Dockerfile) builds a Node 22 production image using Yarn and `yarn.lock`, then starts `build/index.js` on port 3000. Local npm installs use `package-lock.json`; keep both lockfiles aligned when updating dependencies.
+The [Dockerfile](Dockerfile) builds with the npm lockfile on the same pinned Node
+22 patch release used by deployment verification, prunes development dependencies,
+runs as the unprivileged `node` user, and starts `build/index.js` on port 3000. The
+hosted readiness workflow also runs the image with a read-only filesystem, dropped
+Linux capabilities, bounded resources, and a `/health/live` smoke check.
 
 The workspace also includes Cloud Run deployment configuration. See the [deployment guide](deploy/README.md) for required secrets, runtime permissions, configuration validation, and Skaffold commands. Review its project, service, bucket, and region values for your own environment before deploying.
 
-`docker-compose.yml` still includes legacy SQLite mounts and does not configure Google Cloud credentials; it needs configuration review before use with the current Supabase-backed app.
+`docker compose up --build` is a local-only production-image smoke path. It binds
+to loopback, loads runtime configuration from the local `.env` file, and runs with
+a read-only filesystem, dropped capabilities, and no obsolete SQLite mounts. Do
+not use Compose for deployment. The supported release path is the gated Cloud
+Build zero-traffic candidate described in the deployment guide.
 
 ## Science Constellation
 

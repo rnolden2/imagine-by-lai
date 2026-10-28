@@ -256,7 +256,7 @@ export function presentStep(step: BoundStep | undefined, state: SessionState, se
 					? 'Serve my dish'
 					: '',
 		actionObject: 'objectConceptId' in step.config ? step.config.objectConceptId : undefined,
- quantityLabel: 'quantityLabel' in step.config ? step.config.quantityLabel : undefined,
+		quantityLabel: 'quantityLabel' in step.config ? step.config.quantityLabel : undefined,
 		assetRoles: step.assetRoles,
 		review: !!step.review,
 		assistance,

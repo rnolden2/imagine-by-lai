@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import CookingAction from '$lib/games/word-kitchen/CookingAction.svelte';
-	import CookingAnimation from '$lib/games/word-kitchen/CookingAnimation.svelte';
+	import CookingAction from '#lib/games/word-kitchen/CookingAction.svelte';
+	import CookingAnimation from '#lib/games/word-kitchen/CookingAnimation.svelte';
 	import { onMount, untrack } from 'svelte';
 	import type { PageData } from './$types';
-	import type { GameEvent } from '$lib/games/word-kitchen/contracts';
+	import type { GameEvent } from '#lib/games/word-kitchen/contracts';
+	class GameResponseError extends Error {}
 	let { data }: { data: PageData } = $props();
 	let game = $state(untrack(() => data.session));
 	let answer = $state('');
@@ -18,6 +19,7 @@
 	let muted = $state(false);
 	let audio: HTMLAudioElement | undefined;
 	let audioUrl = '';
+	let releaseAudio: (() => void) | undefined;
 	let audioRequest: AbortController | undefined;
 	let audioVersion = 0;
 	const step = $derived(game.step);
@@ -63,8 +65,7 @@
 		audioVersion++;
 		audioRequest?.abort();
 		audio?.pause();
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
-		audioUrl = '';
+		releaseAudio?.();
 		window.speechSynthesis?.cancel();
 	}
 	function remember(event: GameEvent | null) {
@@ -78,8 +79,14 @@
 		}
 	}
 	async function refresh() {
-		const r = await fetch(endpoint);
-		if (r.ok) game = await r.json();
+		try {
+			const r = await fetch(endpoint, { signal: AbortSignal.timeout(15_000) });
+			if (!r.ok) return;
+			const next: unknown = await r.json();
+			if (next && typeof next === 'object') game = next as typeof game;
+		} catch {
+			message = 'The latest game state could not be loaded. Check the connection and retry.';
+		}
 	}
 	async function deliver(event: GameEvent) {
 		if (busy) return;
@@ -90,24 +97,34 @@
 			const r = await fetch(endpoint, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(event)
+				body: JSON.stringify(event),
+				signal: AbortSignal.timeout(15_000)
 			});
-			const b = await r.json();
+			const b: unknown = await r.json().catch(() => null);
 			if (!r.ok) {
 				if ([400, 403, 404, 409, 410].includes(r.status)) {
 					remember(null);
 					await refresh();
 				}
-				throw new Error(b.message ?? 'Your progress could not be saved.');
+				const detail =
+					b &&
+					typeof b === 'object' &&
+					'message' in b &&
+					typeof b.message === 'string' &&
+					b.message.length <= 200
+						? b.message
+						: 'Your progress could not be saved.';
+				throw new GameResponseError(detail);
 			}
-			game = b;
+			if (!b || typeof b !== 'object') throw new Error('Invalid game response');
+			game = b as typeof game;
 			gestureProgress = 0;
 			remember(null);
 			answer = '';
 			usedTiles = [];
 		} catch (e) {
 			message =
-				e instanceof Error
+				e instanceof GameResponseError
 					? e.message
 					: 'Connection interrupted. Your move is saved on this device. Retry when connected.';
 		} finally {
@@ -130,21 +147,43 @@
 		if (!step || muted) return;
 		stopAudio();
 		const version = audioVersion;
-		audioRequest = new AbortController();
+		const request = new AbortController();
+		audioRequest = request;
+		const timeout = setTimeout(() => request.abort(), 15_000);
 		try {
 			const r = await fetch(`${endpoint}/audio`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ stepId: step.id, slow }),
-				signal: audioRequest.signal
+				signal: request.signal
 			});
 			if (!r.ok) throw new Error('Audio unavailable');
 			if (version !== audioVersion) return;
 			if (r.headers.get('content-type')?.includes('audio/')) {
-				audioUrl = URL.createObjectURL(await r.blob());
+				const blob = await r.blob();
 				if (version !== audioVersion) return;
-				audio = new Audio(audioUrl);
-				await audio.play();
+				const url = URL.createObjectURL(blob);
+				const player = new Audio(url);
+				let released = false;
+				const cleanup = () => {
+					if (released) return;
+					released = true;
+					URL.revokeObjectURL(url);
+					if (audio === player) audio = undefined;
+					if (audioUrl === url) audioUrl = '';
+					if (releaseAudio === cleanup) releaseAudio = undefined;
+				};
+				audioUrl = url;
+				audio = player;
+				releaseAudio = cleanup;
+				player.onended = cleanup;
+				player.onerror = cleanup;
+				try {
+					await player.play();
+				} catch (error) {
+					cleanup();
+					throw error;
+				}
 			} else {
 				const b = await r.json();
 				if (!window.speechSynthesis || !b.browserFallback) throw new Error('Audio unavailable');
@@ -157,8 +196,11 @@
 				window.speechSynthesis.speak(speech);
 			}
 		} catch (e) {
-			if (e instanceof DOMException && e.name === 'AbortError') return;
+			if (e instanceof DOMException && e.name === 'AbortError' && version !== audioVersion) return;
 			message = 'Sound is unavailable. Use “Show me” to practice with the written word.';
+		} finally {
+			clearTimeout(timeout);
+			if (audioRequest === request) audioRequest = undefined;
 		}
 	}
 	function tile(id: string, letter: string) {
@@ -577,7 +619,7 @@
 		font-weight: 800;
 		letter-spacing: 2px;
 		font-size: 12px;
-		color: #887146;
+		color: #765f35;
 	}
 	h1 {
 		font-size: clamp(25px, 3vw, 38px);

@@ -1,8 +1,11 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { PageData, ActionData } from './$types';
 	import { enhance } from '$app/forms';
-	import { theme } from '$lib/stores';
-	import LoadingGame from '$lib/components/LoadingGame.svelte';
+	import type { SubmitFunction } from '$app/forms';
+	import { onMount } from 'svelte';
+	import { theme } from '#lib/stores';
+	import LoadingGame from '#lib/components/LoadingGame.svelte';
 
 	export let data: PageData;
 	export let form: ActionData;
@@ -13,6 +16,38 @@
 	let customStoryTheme = '';
 	let useNoTheme = false;
 	let initializedForUserId: number | null = null;
+	let storyRequestKey: string = data.storyRequestKey;
+	let pendingStoryKey = '';
+	const pendingStorageKey = 'imagine.pending-story-job';
+
+	onMount(() => {
+		const pending = localStorage.getItem(pendingStorageKey) ?? '';
+		if (
+			/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pending)
+		) {
+			pendingStoryKey = pending;
+			storyRequestKey = pending;
+		}
+	});
+
+	const submitStory: SubmitFunction = ({ formData }) => {
+		formData.set('requestKey', storyRequestKey);
+		pendingStoryKey = storyRequestKey;
+		localStorage.setItem(pendingStorageKey, storyRequestKey);
+		isGenerating = true;
+		return async ({ update }) => {
+			await update();
+			isGenerating = false;
+		};
+	};
+
+	const recoverStory: SubmitFunction = () => {
+		isGenerating = true;
+		return async ({ update }) => {
+			await update();
+			isGenerating = false;
+		};
+	};
 
 	$: selectedUser = data.users.find((user) => user.id === selectedUserId) ?? null;
 	$: if (selectedUser?.id !== initializedForUserId) {
@@ -23,10 +58,7 @@
 	}
 	$: effectiveStoryThemes = useNoTheme
 		? []
-		: [
-				...selectedStoryThemes,
-				...(customStoryTheme.trim() ? [customStoryTheme.trim()] : [])
-			];
+		: [...selectedStoryThemes, ...(customStoryTheme.trim() ? [customStoryTheme.trim()] : [])];
 
 	function selectUser(user: (typeof data.users)[0]) {
 		selectedUserId = user.id;
@@ -47,6 +79,8 @@
 		useNoTheme = false;
 	}
 </script>
+
+<svelte:head><title>Create a Story · Imaginations By Lai</title></svelte:head>
 
 <div class="flex min-h-screen flex-col items-center justify-center bg-gray-100 pt-10">
 	<!-- User Selection -->
@@ -83,18 +117,8 @@
 				{/if}
 			</div>
 		{/if}
-		<form
-			method="POST"
-			action="?/generateStory"
-			class="space-y-6"
-			use:enhance={() => {
-				isGenerating = true;
-				return async ({ update }) => {
-					await update();
-					isGenerating = false;
-				};
-			}}
-		>
+		<form method="POST" action="?/generateStory" class="space-y-6" use:enhance={submitStory}>
+			<input type="hidden" name="requestKey" value={storyRequestKey} />
 			{#if selectedUserId !== null}
 				<input type="hidden" name="userId" value={selectedUserId} />
 			{/if}
@@ -178,6 +202,16 @@
 			</div>
 		</form>
 
+		{#if pendingStoryKey && !isGenerating}
+			<form method="POST" action="?/recoverStoryJob" use:enhance={recoverStory} class="text-center">
+				<input type="hidden" name="requestKey" value={pendingStoryKey} />
+				<p class="mb-2 text-sm text-gray-600">
+					A previous story request may have been accepted before this page lost its response.
+				</p>
+				<button type="submit" class="font-bold text-teal-800 underline">Check that request</button>
+			</form>
+		{/if}
+
 		{#if form?.error && !isGenerating}
 			<p class="text-center text-sm text-red-500">{form.error}</p>
 		{/if}
@@ -190,20 +224,35 @@
 			<div class="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
 				{#each data.stories as story (story.id)}
 					<a
-						href="/story/{story.id}"
+						href={resolve('/story/[id]', { id: String(story.id) })}
 						class="overflow-hidden rounded-lg bg-white shadow-md transition-shadow hover:shadow-xl"
 					>
-						<img
-							src={story.image_url}
-							alt="Story illustration"
-							class="h-40 w-full object-cover"
-						/>
+						{#if story.image_url}
+							<img
+								src={story.image_url}
+								alt="Story illustration"
+								loading="lazy"
+								class="h-40 w-full object-cover"
+							/>
+						{:else}
+							<div class="flex h-40 items-center justify-center bg-indigo-50 text-indigo-900">
+								Story ready to read
+							</div>
+						{/if}
 						<div class="p-4">
 							<p class="truncate text-sm text-gray-700">"{story.prompt}"</p>
 						</div>
 					</a>
 				{/each}
 			</div>
+			<nav aria-label="Story library pages" class="mt-6 flex justify-center gap-6">
+				{#if data.storyPage > 1}
+					<a href={resolve(`/?page=${data.storyPage - 1}`)} class="underline">Newer stories</a>
+				{/if}
+				{#if data.hasMoreStories}
+					<a href={resolve(`/?page=${data.storyPage + 1}`)} class="underline">Older stories</a>
+				{/if}
+			</nav>
 		</div>
 	{/if}
 </div>

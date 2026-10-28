@@ -4,7 +4,7 @@ import type { PGlite } from '@electric-sql/pglite';
 // Local JavaScript fixture shared with the CLI and browser harness.
 import { createTestDatabase } from '../../../../scripts/word-kitchen/test-db.mjs';
 import { curatedRecipes } from './curated';
-import { initialState } from '$lib/games/word-kitchen/engine';
+import { initialState } from '#lib/games/word-kitchen/engine';
 let db: PGlite;
 const recipe = curatedRecipes[0];
 async function rpc<T = Record<string, unknown>>(name: string, args: unknown[]): Promise<T> {
@@ -46,11 +46,31 @@ beforeAll(async () => {
 afterAll(async () => {
 	await db?.close();
 });
+it('atomically limits concurrent requests across callers and reopens only after expiry', async () => {
+	const scope = `security-test:${randomUUID()}`;
+	const outcomes = await Promise.all(
+		Array.from({ length: 40 }, () => rpc<boolean>('wk_rate_limit', [scope, 20, 60]))
+	);
+	expect(outcomes.filter(Boolean)).toHaveLength(20);
+	expect(await rpc<boolean>('wk_rate_limit', [scope, 20, 60])).toBe(false);
+	await db.query(
+		`update game_rate_limits set window_start=now()-interval '61 seconds' where scope=$1`,
+		[scope]
+	);
+	expect(await rpc<boolean>('wk_rate_limit', [scope, 20, 60])).toBe(true);
+});
 it('restricts every feature table and RPC to the server role', async () => {
 	const result = await db.query<{ allowed: boolean }>(
 		`select has_function_privilege('anon','wk_start_session(uuid,bigint,uuid,uuid,boolean,uuid,text,jsonb,jsonb,integer)','execute') allowed`
 	);
 	expect(result.rows[0].allowed).toBe(false);
+	expect(
+		(
+			await db.query<{ allowed: boolean }>(
+				`select has_function_privilege('anon','wk_parent_point_totals()','execute') allowed`
+			)
+		).rows[0].allowed
+	).toBe(false);
 	const tables = await db.query<{ rowsecurity: boolean }>(
 		`select rowsecurity from pg_tables where tablename like 'game_%'or tablename like 'kitchen_%'`
 	);
@@ -105,6 +125,13 @@ it('commits attempts, spelling projection and exactly one reward with replay', a
 	expect(
 		(await db.query(`select * from spelling_attempts where session_id=$1`, [id])).rows
 	).toHaveLength(1);
+	expect(
+		(
+			await db.query<{ points: number }>(
+				'select points from wk_parent_point_totals() where child_id=1'
+			)
+		).rows[0].points
+	).toBe(92);
 	const conflict = [...args];
 	conflict[3] = 'changed';
 	await expect(rpc('wk_apply_event', conflict)).rejects.toThrow('IDEMPOTENCY_CONFLICT');
@@ -172,11 +199,19 @@ it('serializes generation and reserves money once before paid calls', async () =
 	await expect(
 		rpc('wk_enqueue_job', [randomUUID(), 2, randomUUID(), 'other', {}, 5])
 	).rejects.toThrow('GENERATION_BUSY');
-	expect(await rpc('wk_reserve_cost', [id, 'logical-call', 0.3, 2, 5])).toBe(true);
-	expect(await rpc('wk_reserve_cost', [id, 'logical-call', 0.3, 2, 5])).toBe(false);
-	await expect(rpc('wk_reserve_cost', [id, 'overspend', 2, 2, 5])).rejects.toThrow(
-		'BUDGET_EXCEEDED'
+	await expect(rpc('wk_reserve_cost', [id, 0, 'too-early', 0.3, 2, 5])).rejects.toThrow(
+		'STALE_LEASE'
 	);
+	const working = await rpc<{ lease_token: number }>('wk_claim_job', [id]);
+	expect(await rpc('wk_reserve_cost', [id, working.lease_token, 'logical-call', 0.3, 2, 5])).toBe(
+		true
+	);
+	expect(await rpc('wk_reserve_cost', [id, working.lease_token, 'logical-call', 0.3, 2, 5])).toBe(
+		false
+	);
+	await expect(
+		rpc('wk_reserve_cost', [id, working.lease_token, 'overspend', 2, 2, 5])
+	).rejects.toThrow('BUDGET_EXCEEDED');
 	await rpc('wk_cancel_job', [id]);
 	expect(await rpc('wk_claim_job', [id])).toBeNull();
 });

@@ -1,6 +1,6 @@
 import { fail, type Action } from '@sveltejs/kit';
-import { getSupabase, throwSupabaseError } from '$lib/server/db';
-import { isOperation, NUMBER_RANGES, MINUTE_STEPS } from '$lib/math';
+import { getSupabase, throwSupabaseError } from '#lib/server/db';
+import { isOperation, NUMBER_RANGES, MINUTE_STEPS } from '#lib/math';
 
 export const saveMathSettings: Action = async ({ request, locals }) => {
 	if (!locals.user?.isAdmin) return fail(403, { message: 'Admin access required.' });
@@ -49,8 +49,8 @@ export const saveMathSettings: Action = async ({ request, locals }) => {
 			success: true,
 			message: 'Math settings saved. Open practice pages update automatically.'
 		};
-	} catch (error) {
-		console.error('Failed to save math settings:', error);
+	} catch {
+		console.error('math.settings.save.failed', { requestId: locals.requestId });
 		return fail(503, { ...result, message: 'Math settings could not be saved. Please try again.' });
 	}
 };
@@ -67,8 +67,8 @@ export const clearMathStats: Action = async ({ request, locals }) => {
 		const { error } = await supabase.from('math_attempts').delete().eq('child_id', childId);
 		if (error) throwSupabaseError('clearing math history', error);
 		return { ...result, success: true, message: 'Math history cleared for this child.' };
-	} catch (error) {
-		console.error('Failed to clear math history:', error);
+	} catch {
+		console.error('math.history.clear.failed', { requestId: locals.requestId });
 		return fail(503, {
 			...result,
 			message: 'Math history could not be cleared. Please try again.'

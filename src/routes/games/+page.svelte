@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import type { PageData } from './$types';
+	let { data }: { data: PageData } = $props();
 </script>
 
 <svelte:head><title>Games · Imaginations By Lai</title></svelte:head>
@@ -21,15 +23,15 @@
 			</p>
 			<span class="font-bold text-cyan-200">Let’s explore →</span>
 		</a>
-		<a
-			href={resolve('/games/word-kitchen')}
-			class="block max-w-xl rounded-3xl bg-amber-100 p-8 shadow-sm transition hover:-translate-y-1"
-			><span class="text-5xl" aria-hidden="true">🥣</span>
-			<h2 class="mt-5 text-3xl font-extrabold text-teal-900">Word Kitchen</h2>
-			<p class="my-3 text-lg text-slate-700">
-				A pinch of spelling, a spoonful of imagination. What will you make today?
-			</p>
-			<span class="font-bold text-teal-900">Let’s cook →</span></a
-		>
+		{#if data.gameAvailability.kitchen}<a
+				href={resolve('/games/word-kitchen')}
+				class="block max-w-xl rounded-3xl bg-amber-100 p-8 shadow-sm transition hover:-translate-y-1"
+				><span class="text-5xl" aria-hidden="true">🥣</span>
+				<h2 class="mt-5 text-3xl font-extrabold text-teal-900">Word Kitchen</h2>
+				<p class="my-3 text-lg text-slate-700">
+					A pinch of spelling, a spoonful of imagination. What will you make today?
+				</p>
+				<span class="font-bold text-teal-900">Let’s cook →</span></a
+			>{/if}
 	</div>
 </section>

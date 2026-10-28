@@ -1,8 +1,8 @@
-import { reviseRecipe } from '$lib/server/games/revisions';
+import { reviseRecipe } from '#lib/server/games/revisions';
 import { json, error } from '@sveltejs/kit';
 import { z } from 'zod';
-import { getSupabase } from '$lib/server/db';
-import { settingsSchema } from '$lib/games/word-kitchen/contracts';
+import { getSupabase } from '#lib/server/db';
+import { settingsSchema } from '#lib/games/word-kitchen/contracts';
 import {
 	requireParent,
 	requireOrigin,
@@ -10,16 +10,25 @@ import {
 	childIdSchema,
 	rpc,
 	checkResult
-} from '$lib/server/games/common';
-import { authorizeDevice, requireChild } from '$lib/server/games/authorization';
-import { enqueueAndDispatchGeneration } from '$lib/server/games/queue';
-import { generationPolicy } from '$lib/server/games/generation';
-import { normalizeAnswer } from '$lib/games/word-kitchen/engine';
+} from '#lib/server/games/common';
+import { authorizeDevice, requireChild } from '#lib/server/games/authorization';
+import { enqueueAndDispatchGeneration } from '#lib/server/games/queue';
+import { generationPolicy } from '#lib/server/games/generation';
+import { normalizeAnswer } from '#lib/games/word-kitchen/engine';
 import type { RequestHandler } from './$types';
 const uuid = z.string().uuid();
 const schema = z.discriminatedUnion('action', [
 	z.object({ action: z.literal('reset_generation_limit'), key: uuid }),
- z.object({action:z.literal('revise'),revisionId:uuid,checksum:z.string().length(64),title:z.string().trim().min(1).max(80),description:z.string().trim().min(1).max(400),definitions:z.array(z.object({id:z.string().max(100),definition:z.string().trim().min(1).max(240)})).max(10)}),
+	z.object({
+		action: z.literal('revise'),
+		revisionId: uuid,
+		checksum: z.string().length(64),
+		title: z.string().trim().min(1).max(80),
+		description: z.string().trim().min(1).max(400),
+		definitions: z
+			.array(z.object({ id: z.string().max(100), definition: z.string().trim().min(1).max(240) }))
+			.max(10)
+	}),
 	z.object({ action: z.literal('settings'), childId: childIdSchema, settings: settingsSchema }),
 	z.object({ action: z.literal('unlock'), childIds: z.array(childIdSchema).min(1).max(50) }),
 	z.object({ action: z.literal('revoke'), deviceId: uuid }),
@@ -53,11 +62,16 @@ export const POST: RequestHandler = async (e) => {
 	if ('childId' in b) await requireChild(e, b.childId);
 	switch (b.action) {
 		case 'reset_generation_limit':
-			return json(await rpc('wk_reset_generation_limit', {
-				p_id: b.key,
-				p_daily: generationPolicy.dailyJobs
-			}));
- case 'revise':return json(await reviseRecipe(b.revisionId,b.checksum,b.title,b.description,b.definitions));
+			return json(
+				await rpc('wk_reset_generation_limit', {
+					p_id: b.key,
+					p_daily: generationPolicy.dailyJobs
+				})
+			);
+		case 'revise':
+			return json(
+				await reviseRecipe(b.revisionId, b.checksum, b.title, b.description, b.definitions)
+			);
 		case 'settings':
 			return json(
 				await rpc('wk_save_settings', {
@@ -89,8 +103,10 @@ export const POST: RequestHandler = async (e) => {
 		case 'remove_favorite':
 			checkResult(await db.from('game_favorite_foods').delete().eq('id', b.id));
 			break;
-		case 'generate':
-			return json(await enqueueAndDispatchGeneration(b.childId, b.favoriteId, b.key), { status: 202 });
+		case 'generate': {
+			const job = await enqueueAndDispatchGeneration(b.childId, b.favoriteId, b.key);
+			return json({ id: job.id, status: job.status }, { status: 202 });
+		}
 		case 'cancel':
 			await rpc('wk_cancel_job', { p_id: b.jobId });
 			break;

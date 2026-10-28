@@ -1,5 +1,5 @@
-import { base } from '$app/paths';
-import type { MathSettings } from '$lib/types';
+import { resolve } from '$app/paths';
+import type { MathSettings } from '#lib/types';
 
 const CHANNEL = 'math-settings-saved';
 const REFRESH_INTERVAL = 15_000;
@@ -29,7 +29,7 @@ export function watchMathSettings(
 		pending = controller;
 		const timeout = setTimeout(() => controller.abort(), 10_000);
 		try {
-			const response = await fetch(`${base}/api/math/settings`, {
+			const response = await fetch(resolve('/api/math/settings'), {
 				cache: 'no-store',
 				signal: controller.signal
 			});

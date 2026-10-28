@@ -15,3 +15,14 @@ build
 package
 **/.env
 **/.env.*
+**/*service-account*.json
+src/lib/server/api-project.json
+.agents
+.claude
+.codex
+test-results
+playwright-report
+# Word Kitchen masters are retained for deterministic asset regeneration. Runtime
+# delivery uses the bounded WebP variants recorded in the asset manifest.
+static/word-kitchen/*/master.png
+static/word-kitchen/*/provider-master.png

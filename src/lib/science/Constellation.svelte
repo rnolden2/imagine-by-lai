@@ -147,7 +147,7 @@
 		<span>Select a star to discover its science</span>
 		<div class="zoom-controls">
 			<button onclick={() => zoomBy(-0.5)} disabled={zoom <= 1} aria-label="Zoom out">−</button>
-			<button onclick={reset} aria-label="Reset constellation view"
+			<button onclick={reset} aria-label="{Math.round(zoom * 100)}% — reset constellation view"
 				>{Math.round(zoom * 100)}%</button
 			>
 			<button onclick={() => zoomBy(0.5)} disabled={zoom >= 3} aria-label="Zoom in">+</button>

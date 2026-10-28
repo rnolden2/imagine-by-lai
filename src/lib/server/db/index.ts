@@ -1,15 +1,25 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { getSupabaseServiceRoleKey, getSupabaseUrl } from '$lib/server/secrets';
+import { getSupabaseServiceRoleKey, getSupabaseUrl } from '#lib/server/secrets';
 import { SupabaseConnectionError } from './errors';
 
 let supabaseClient: SupabaseClient | null = null;
+let initializingClient: Promise<SupabaseClient> | null = null;
 
 export { SupabaseConnectionError } from './errors';
 
 function isLikelySupabaseUrl(url: string): boolean {
 	try {
 		const parsed = new URL(url);
-		return parsed.protocol === 'https:' && parsed.hostname.endsWith('.supabase.co');
+		return (
+			parsed.protocol === 'https:' &&
+			parsed.hostname.endsWith('.supabase.co') &&
+			!parsed.username &&
+			!parsed.password &&
+			!parsed.port &&
+			parsed.pathname === '/' &&
+			!parsed.search &&
+			!parsed.hash
+		);
 	} catch {
 		return false;
 	}
@@ -33,7 +43,15 @@ function describeSupabaseError(operation: string, cause: unknown): string {
 
 export async function getSupabase(): Promise<SupabaseClient> {
 	if (supabaseClient) return supabaseClient;
+	if (!initializingClient) {
+		initializingClient = initializeSupabase().finally(() => {
+			initializingClient = null;
+		});
+	}
+	return initializingClient;
+}
 
+async function initializeSupabase(): Promise<SupabaseClient> {
 	try {
 		const [url, serviceRoleKey] = await Promise.all([
 			getSupabaseUrl(),
@@ -53,6 +71,16 @@ export async function getSupabase(): Promise<SupabaseClient> {
 		}
 
 		supabaseClient = createClient(url, serviceRoleKey, {
+			global: {
+				fetch: (input, init) =>
+					fetch(input, {
+						...init,
+						signal: AbortSignal.any([
+							AbortSignal.timeout(15000),
+							...(init?.signal ? [init.signal] : [])
+						])
+					})
+			},
 			auth: {
 				autoRefreshToken: false,
 				persistSession: false
@@ -82,6 +110,5 @@ export function throwSupabaseError(operation: string, cause: unknown): never {
 
 export function getSupabaseErrorMessage(error: unknown): string {
 	if (error instanceof SupabaseConnectionError) return error.publicMessage;
-	if (error instanceof Error) return error.message;
-	return 'Supabase request failed.';
+	return 'The database is temporarily unavailable. Please try again shortly.';
 }

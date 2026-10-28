@@ -1,25 +1,25 @@
 import { error } from '@sveltejs/kit';
-import { getSupabase } from '$lib/server/db';
-import { GRADE_WORD_LISTS } from '$lib/server/spelling-words';
+import { getSupabase } from '#lib/server/db';
+import { GRADE_WORD_LISTS } from '#lib/server/spelling-words';
 import {
 	settingsSchema,
 	type Recipe,
 	type SessionSnapshot,
 	type BoundStep
-} from '$lib/games/word-kitchen/contracts';
-import { selectWords, normalizeAnswer, type Candidate } from '$lib/games/word-kitchen/engine';
+} from '#lib/games/word-kitchen/contracts';
+import { selectWords, normalizeAnswer, type Candidate } from '#lib/games/word-kitchen/engine';
 import { checkResult } from './common';
 
 export async function learningContext(childId: number) {
 	const db = await getSupabase();
-	const [childResult, settingsResult, wordResult, attemptResult] = await Promise.all([
+	const [childResult, settingsResult] = await Promise.all([
 		db.from('child_profiles').select('id,grade,name').eq('id', childId).maybeSingle(),
-		db
-			.from('game_child_settings')
-			.select('settings,revision')
-			.eq('child_id', childId)
-			.maybeSingle(),
-		db.from('spelling_words').select('id,word,grade'),
+		db.from('game_child_settings').select('settings,revision').eq('child_id', childId).maybeSingle()
+	]);
+	const child = checkResult(childResult);
+	if (!child) error(404, 'Child not found.');
+	const [wordResult, attemptResult] = await Promise.all([
+		db.from('spelling_words').select('id,word,grade').eq('grade', child.grade),
 		db
 			.from('spelling_attempts')
 			.select('word,is_correct,attempts_used,created_at,game_attempt_id,mechanic,assistance')
@@ -28,11 +28,9 @@ export async function learningContext(childId: number) {
 			.order('created_at', { ascending: false })
 			.limit(2000)
 	]);
-	const child = checkResult(childResult);
-	if (!child) error(404, 'Child not found.');
 	const row = checkResult(settingsResult);
 	const settings = settingsSchema.parse({ ...row?.settings, revision: row?.revision ?? 0 });
-	const custom = (checkResult(wordResult) ?? []).filter((w) => w.grade === child.grade);
+	const custom = checkResult(wordResult) ?? [];
 	const attempts = checkResult(attemptResult) ?? [];
 	const candidates: Candidate[] = [
 		...custom.map((w) => ({ id: `custom:${w.id}`, word: w.word, source: 'custom' as const })),

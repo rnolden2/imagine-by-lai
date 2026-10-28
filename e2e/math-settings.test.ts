@@ -149,8 +149,12 @@ test('practice polls for saves from a separate browser context', async ({ page, 
 	const form = await selectOperations(page, ['addition']);
 	await form.getByRole('button', { name: 'Save Math', exact: true }).click();
 	await expect(page.getByRole('status')).toContainText('Math settings saved.');
-	const practice = await browser.newPage({ baseURL: 'http://localhost:4175' });
+	const practice = await browser.newPage({
+		baseURL: 'http://localhost:4175',
+		extraHTTPHeaders: { 'x-forwarded-proto': 'http' }
+	});
 	try {
+		await practice.context().addCookies(await page.context().cookies());
 		await practice.route('**/*', (route) =>
 			new URL(route.request().url()).hostname === 'localhost' ? route.continue() : route.abort()
 		);
@@ -199,7 +203,7 @@ test('focus refresh preserves an answer and recovers from a failed settings read
 	await page.unroute('**/api/math/settings');
 	const refreshed = page.waitForResponse('**/api/math/settings');
 	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-	expect((await refreshed).headers()['cache-control']).toBe('no-store');
+	expect((await refreshed).headers()['cache-control']).toContain('no-store');
 	await expect(page.getByRole('status')).toHaveCount(0);
 	await expect(page.getByRole('textbox', { name: 'Your answer' })).toHaveValue('42');
 });

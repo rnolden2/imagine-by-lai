@@ -1,13 +1,14 @@
-import { page } from '@vitest/browser/context';
-import { afterEach, expect, it, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import Page from './+page.svelte';
 import type { PageData } from './$types';
 
-vi.mock('$lib/math-settings-sync', () => ({ watchMathSettings: () => () => {} }));
+vi.mock('#lib/math-settings-sync', () => ({ watchMathSettings: () => () => {} }));
 
 const data = {
 	user: undefined,
+	gameAvailability: { games: true, kitchen: true, generation: true },
 	users: [
 		{
 			id: 1,
@@ -40,11 +41,12 @@ const data = {
 	]
 } satisfies PageData;
 afterEach(() => vi.restoreAllMocks());
+beforeEach(() => localStorage.clear());
 it('uses the selected child’s mode, records answers once, and separates sessions', async () => {
 	const fetchMock = vi
 		.spyOn(globalThis, 'fetch')
-		.mockResolvedValue(new Response('{"success":true}'));
-	render(Page, { data });
+		.mockImplementation(async () => new Response('{"success":true}'));
+	await render(Page, { data });
 	await page.getByRole('button', { name: 'Alex', exact: true }).click();
 	await page.getByRole('textbox', { name: 'Your answer' }).fill('5');
 	await page.getByRole('button', { name: 'Check', exact: true }).click();
@@ -61,17 +63,20 @@ it('uses the selected child’s mode, records answers once, and separates sessio
 });
 it('shows a history failure without blocking practice', async () => {
 	vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 503 }));
-	render(Page, { data });
+	await render(Page, { data });
 	await page.getByRole('button', { name: 'Sam', exact: true }).click();
 	await page.getByRole('button', { name: /^\d+$/ }).first().click();
-	await expect
-		.element(page.getByRole('status'))
-		.toHaveTextContent('Some answers could not be saved');
+	await expect.element(page.getByRole('status')).toBeVisible();
+	expect(document.querySelector('[role="status"]')?.textContent).toContain(
+		'Some answers could not be saved'
+	);
 });
 
 it('applies refreshed modes to the selected child without restarting their session', async () => {
-	const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}'));
-	const view = render(Page, { data });
+	const fetchMock = vi
+		.spyOn(globalThis, 'fetch')
+		.mockImplementation(async () => new Response('{"success":true}'));
+	const view = await render(Page, { data });
 	await page.getByRole('button', { name: 'Alex', exact: true }).click();
 	await page.getByRole('textbox', { name: 'Your answer' }).fill('5');
 	await page.getByRole('button', { name: 'Check', exact: true }).click();
@@ -95,7 +100,7 @@ it('applies refreshed modes to the selected child without restarting their sessi
 });
 
 it('preserves an unfinished answer when only another child or the save timestamp changes', async () => {
-	const view = render(Page, { data });
+	const view = await render(Page, { data });
 	await page.getByRole('button', { name: 'Alex', exact: true }).click();
 	await page.getByRole('textbox', { name: 'Your answer' }).fill('42');
 	await view.rerender({

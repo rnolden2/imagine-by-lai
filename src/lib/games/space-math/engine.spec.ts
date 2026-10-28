@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { MATH_OPERATIONS, NUMBER_RANGES, resolveMathSettings } from '$lib/math';
-import { parseMathAttempt } from '$lib/server/math-attempt';
+import { MATH_OPERATIONS, NUMBER_RANGES, resolveMathSettings } from '#lib/math';
+import { parseMathAttempt } from '#lib/server/math-attempt';
 import { generateSpaceProblem, problemHint } from './engine';
 
 describe('Space Math curriculum integration', () => {

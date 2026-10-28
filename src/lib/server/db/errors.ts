@@ -6,6 +6,6 @@ export class SupabaseConnectionError extends Error {
 		super(message);
 		this.name = 'SupabaseConnectionError';
 		this.cause = cause;
-		this.publicMessage = message;
+		this.publicMessage = 'The database is temporarily unavailable. Please try again shortly.';
 	}
 }

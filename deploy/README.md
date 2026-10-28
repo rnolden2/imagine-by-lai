@@ -19,17 +19,103 @@ npm run kitchen:infrastructure          # preview only
 npm run kitchen:infrastructure -- --apply
 ```
 
-`npm run deploy` submits `cloudbuild.yaml`, which builds and deploys the service.
+`npm run deploy` submits `cloudbuild.yaml`, which builds an image tagged with the
+immutable Cloud Build ID and deploys a `candidate` revision with **zero traffic**.
 The VS Code **Cloud: deploy Imagine** task runs the same command. Deployment only
-starts when requested; opening the workspace does not deploy anything. Apply
+starts when requested; opening the workspace does not deploy anything, and a
+successful build does not promote production traffic. Apply
 pending Supabase migrations separately before deploying dependent application
-changes. The kitchen recovery migration must precede the five-hour schedule.
+changes. The kitchen recovery migration must precede the fifteen-minute schedule.
 Apply `supabase/migrations/20261002190844_admin_daily_limit_word_kitchen.sql`
 before deploying the admin daily-allowance controls; they require its server-only
 quota RPCs.
 
-`deploy/google-cloud.env` contains the non-secret command defaults; matching VS Code
-terminal settings live in `.vscode/settings.json`. Update both if this project moves.
+Cloud Build performs a frozen dependency install, dependency audit, repository
+lint, Svelte/TypeScript check, and the complete isolated Node/server test project
+before it builds or pushes an image. It deliberately does not start a browser in
+the slim build image. Browser and independent-PostgreSQL suites remain in
+the protected hosted readiness workflow; require that workflow before invoking the
+deployment or promoting a candidate.
+
+The application image is stored in the regional Artifact Registry repository
+`us-central1-docker.pkg.dev/PROJECT/imagine-by-lai`. Container Registry is shut
+down; do not change application image paths back to `gcr.io`. Google-owned Cloud
+Build builder images with `gcr.io` URLs remain supported.
+
+## Candidate verification and promotion
+
+The candidate has an HTTP startup probe at `/health/ready` and liveness probe at
+`/health/live`. Readiness verifies essential non-secret configuration and a bounded
+database query; it does not call storage or paid AI providers. Both responses are
+generic and non-cacheable. The tagged URL is addressable without receiving normal
+traffic. If invocation is IAM-protected, use an authorized identity token for smoke
+requests instead of changing the service to public solely for testing.
+
+After migrations and the documented
+[database and image-storage recovery rehearsal](../docs/recovery-rehearsal.md), record
+the candidate revision and test the tagged URL: anonymous denial, parent login/logout, device scoping and
+revocation, one practice-save replay, one story job through every stage, Word
+Kitchen generation/recovery, image signing, maintenance, and both health routes.
+Review error rate, task age, cleanup backlog, and provider charges before promotion.
+
+Promote gradually by revision tag, observing each step before continuing:
+
+```sh
+npm run cloud -- run services update-traffic imagine-by-lai --region=us-central1 --to-tags candidate=5
+npm run cloud -- run services update-traffic imagine-by-lai --region=us-central1 --to-tags candidate=25
+npm run cloud -- run services update-traffic imagine-by-lai --region=us-central1 --to-tags candidate=100
+```
+
+Rollback targets a recorded previously secured revision, never an ambiguous
+`latest` image or revision:
+
+```sh
+npm run cloud -- run services update-traffic imagine-by-lai --region=us-central1 --to-revisions REVISION_NAME=100
+```
+
+Traffic changes are operational actions and were not run during local readiness
+work. See Google's [health-check guidance](https://docs.cloud.google.com/run/docs/configuring/healthchecks)
+and [gradual rollout procedure](https://docs.cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration).
+
+## Monitoring alerts
+
+Preview the four managed alert policies without authentication or writes:
+
+```sh
+npm run monitoring:infrastructure
+```
+
+The four policies cover background generation/maintenance failures, readiness
+failures, Cloud Run 5xx request logs, and a Cloud Tasks queue that remains nonempty
+for fifteen minutes. They contain only safe operation names and resource labels.
+To apply them, select and test an existing notification channel, then pass
+its full resource name explicitly:
+
+```sh
+npm run monitoring:infrastructure -- \
+  --notification-channel projects/PROJECT/notificationChannels/CHANNEL \
+  --apply
+```
+
+Apply is idempotent for policies labeled `managed_by=imagine_repo`; it updates only
+those managed policies and preserves unrelated policies. It does not create or
+guess a notification destination. After applying, generate a controlled test alert,
+confirm delivery and recovery/closure, and record the recipient/escalation owner.
+Log-based alerts observe only entries written after configuration. See Google's
+[log-alert API contract](https://docs.cloud.google.com/logging/docs/alerting/log-based-alerts).
+
+Create the ignored local configuration from the tracked placeholder before using
+the wrapper:
+
+```sh
+cp deploy/google-cloud.env.example deploy/google-cloud.env
+```
+
+`deploy/google-cloud.env` accepts only the six non-secret project, quota-project,
+and region defaults present in the example. The wrapper rejects additional keys,
+including credentials and application secrets. Never stage the local file.
+Matching VS Code terminal settings live in `.vscode/settings.json`. Update both if
+this project moves.
 The wrapper overrides inherited project and quota environment variables for its
 child process, leaving your other terminals unchanged. Existing gcloud and ADC
 authentication is reused; the signed-in account must have access to this project
@@ -44,7 +130,7 @@ the npm commands above still apply all project defaults automatically.
 See Google documentation for [environment property overrides](https://docs.cloud.google.com/sdk/docs/properties)
 and [quota-project overrides](https://docs.cloud.google.com/docs/quotas/set-quota-project).
 
-## Skaffold alternative
+## Skaffold alternative (not the production promotion path)
 
 `skaffold.yaml` builds the existing Dockerfile with Google Cloud Build and deploys
 the `imagine-by-lai` service in project `api-project-371618`, region `us-central1`.
@@ -55,8 +141,25 @@ v4beta13 JSON schema does not accept `CLOUD_LOGGING_ONLY`. Skaffold sets the bui
 log bucket to its source staging bucket; the build account needs write access to
 that bucket as well as Cloud Logging.
 
-Before the first deployment, ensure the existing `gcr.io` repository is available
-through Artifact Registry and the build account can push images and write logs.
+Unlike `cloudbuild.yaml`, `skaffold run` does not enforce the zero-traffic candidate
+gate. Use it only for an isolated staging service or manually reproduce the traffic
+controls. The documented production path is Cloud Build plus explicit promotion.
+
+Before the first deployment, enable Artifact Registry and create the repository
+once if `describe` reports that it is absent:
+
+```sh
+npm run cloud -- services enable artifactregistry.googleapis.com
+npm run cloud -- artifacts repositories describe imagine-by-lai --location=us-central1
+npm run cloud -- artifacts repositories create imagine-by-lai --repository-format=docker --location=us-central1 --description="Imagine by LAI production images"
+```
+
+Do not run the create command when `describe` already succeeds. Grant the Cloud
+Build service account `roles/artifactregistry.writer` on this repository. Cloud Run
+must have `roles/artifactregistry.reader` when its service agent is not already
+authorized by same-project defaults. Keep repository administration separate from
+the build identity; builds need upload/download access, not repository-creation
+permission. The build account must also be able to write logs.
 The deploying identity needs Cloud Build and Cloud Run deployment permissions and
 permission to act as the build and runtime service accounts. Authenticate with
 `gcloud auth application-default login` if application default credentials are not

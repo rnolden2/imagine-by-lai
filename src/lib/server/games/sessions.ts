@@ -1,14 +1,14 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { error, type RequestEvent } from '@sveltejs/kit';
-import { getSupabase } from '$lib/server/db';
+import { getSupabase } from '#lib/server/db';
 import {
 	validateRecipe,
 	type GameEvent,
 	type SessionSnapshot,
 	type SessionState,
 	type Recipe
-} from '$lib/games/word-kitchen/contracts';
-import { applyEvent, initialState, presentStep, summarize } from '$lib/games/word-kitchen/engine';
+} from '#lib/games/word-kitchen/contracts';
+import { applyEvent, initialState, presentStep, summarize } from '#lib/games/word-kitchen/engine';
 import { requireChild } from './authorization';
 import { checkResult, hash, limit, rpc } from './common';
 import { bindSession, learningContext } from './learning-context';
@@ -28,6 +28,22 @@ export type SessionRow = {
 	preference_revision: number;
 	created_at: string;
 };
+const gameEventErrors = new Set([
+	'STATE_CONFLICT',
+	'SESSION_FINISHED',
+	'SESSION_PAUSED',
+	'INVALID_EVENT',
+	'INVALID_DECORATION',
+	'INVALID_ANSWER',
+	'INVALID_ACTION',
+	'INVALID_SCENE'
+]);
+
+export function safeGameEventError(cause: unknown) {
+	const message = cause instanceof Error ? cause.message : '';
+	return gameEventErrors.has(message) ? message : 'INVALID_EVENT';
+}
+
 export function compatible(recipe: Recipe, exclusions: string[]) {
 	return ![...recipe.ingredientConceptIds, ...recipe.exclusionTags].some((id) =>
 		exclusions.includes(id)
@@ -36,7 +52,13 @@ export function compatible(recipe: Recipe, exclusions: string[]) {
 export async function sessionRow(event: RequestEvent, id: string) {
 	const db = await getSupabase();
 	const row = checkResult(
-		await db.from('game_sessions').select('*').eq('id', id).maybeSingle()
+		await db
+			.from('game_sessions')
+			.select(
+				'id,child_id,recipe_revision_id,device_id,preview,snapshot,state,sequence,status,expires_at,preference_revision,created_at'
+			)
+			.eq('id', id)
+			.maybeSingle()
 	) as SessionRow | null;
 	if (!row) error(404, 'Not found.');
 	const scope = await requireChild(event, Number(row.child_id));
@@ -78,7 +100,7 @@ export async function startSession(
 	await limit(`start:${scope.deviceId ?? 'parent'}`, 20, 3600);
 	const db = await getSupabase();
 	const revision = checkResult(
-		await db.from('game_recipe_revisions').select('*').eq('id', revisionId).maybeSingle()
+		await db.from('game_recipe_revisions').select('definition').eq('id', revisionId).maybeSingle()
 	);
 	if (!revision) error(404, 'Not found.');
 	const context = await learningContext(childId);
@@ -127,23 +149,18 @@ export async function submitEvent(event: RequestEvent, id: string, input: GameEv
 	try {
 		next = applyEvent(row.snapshot, row.state, input);
 	} catch (e) {
-		error(409, e instanceof Error ? e.message : 'INVALID_EVENT');
+		error(409, safeGameEventError(e));
 	}
-	const saved = await rpc<SessionRow>('wk_apply_event', {
-		p_session: id,
-		p_child: Number(row.child_id),
-		p_event: input.eventId,
-		p_hash: requestHash,
-		p_sequence: input.expectedSequence,
-		p_type: input.type,
-		p_state: next,
-		p_evidence: next.evidence.slice(row.state.evidence.length)
-	});
-	console.info('word-kitchen.event', {
-		sessionId: id,
-		eventId: input.eventId,
-		type: input.type,
-		status: saved.status
-	});
-	return envelope(saved);
+	return envelope(
+		await rpc<SessionRow>('wk_apply_event', {
+			p_session: id,
+			p_child: Number(row.child_id),
+			p_event: input.eventId,
+			p_hash: requestHash,
+			p_sequence: input.expectedSequence,
+			p_type: input.type,
+			p_state: next,
+			p_evidence: next.evidence.slice(row.state.evidence.length)
+		})
+	);
 }

@@ -1,4 +1,4 @@
-import { generateProblem, type Problem, type Settings } from '$lib/math';
+import { generateProblem, type Problem, type Settings } from '#lib/math';
 
 function shuffle<T>(values: T[]): T[] {
 	const result = [...values];

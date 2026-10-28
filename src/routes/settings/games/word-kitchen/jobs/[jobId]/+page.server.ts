@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { getSupabase } from '$lib/server/db';
-import { requireParent, checkResult } from '$lib/server/games/common';
+import { getSupabase } from '#lib/server/db';
+import { requireParent, checkResult } from '#lib/server/games/common';
 import type { PageServerLoad } from './$types';
 export const load: PageServerLoad = async (e) => {
 	requireParent(e);
@@ -8,9 +8,7 @@ export const load: PageServerLoad = async (e) => {
 	const job = checkResult(
 		await db
 			.from('game_generation_jobs')
-			.select(
-				'id,child_id,recipe_id,status,stage,checkpoint,error_code,estimated_cost,actual_cost,input,created_at'
-			)
+			.select('id,child_id,recipe_id,status,stage,checkpoint,error_code,input,created_at')
 			.eq('id', e.params.jobId)
 			.maybeSingle()
 	);

@@ -7,3 +7,17 @@ bun.lockb
 
 # Miscellaneous
 /static/
+/build/
+/.svelte-kit/
+/test-results/
+/playwright-report/
+/coverage/
+/node_modules/
+/.agents/
+/.codex/
+/.claude/
+**/.env
+**/.env.*
+**/*.env
+**/*service-account*.json
+src/lib/server/api-project.json

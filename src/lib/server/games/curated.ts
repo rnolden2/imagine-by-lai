@@ -4,7 +4,7 @@ import {
 	type Recipe,
 	type RecipeStep,
 	type Vocabulary
-} from '$lib/games/word-kitchen/contracts';
+} from '#lib/games/word-kitchen/contracts';
 
 export function stableId(value: string) {
 	const h = createHash('sha256').update(`word-kitchen-v1:${value}`).digest('hex');

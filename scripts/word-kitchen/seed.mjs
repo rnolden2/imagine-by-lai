@@ -45,7 +45,9 @@ try {
 							console.log(`Reusing verified ${concept.label}`);
 							continue;
 						}
-					} catch {}
+					} catch {
+						/* Missing or invalid cached reports must be rebuilt. */
+					}
 					await fs.mkdir(folder, { recursive: true });
 					console.log(`${generate ? 'Preparing' : 'Packaging'} shared artwork: ${concept.label}`);
 					let bytes;
@@ -131,34 +133,30 @@ try {
 			);
 		for (const asset of reports) {
 			check(
-				await db
-					.from('kitchen_asset_identities')
-					.upsert(
-						{
-							id: asset.identityId,
-							concept_id: asset.conceptId,
-							state: 'whole',
-							style: 'word-kitchen-v1',
-							view: 'three-quarter',
-							contract: 'kitchen-asset.v1'
-						},
-						{ ignoreDuplicates: true }
-					)
+				await db.from('kitchen_asset_identities').upsert(
+					{
+						id: asset.identityId,
+						concept_id: asset.conceptId,
+						state: 'whole',
+						style: 'word-kitchen-v1',
+						view: 'three-quarter',
+						contract: 'kitchen-asset.v1'
+					},
+					{ ignoreDuplicates: true }
+				)
 			);
 			check(
-				await db
-					.from('kitchen_asset_revisions')
-					.upsert(
-						{
-							id: asset.revisionId,
-							identity_id: asset.identityId,
-							revision: 1,
-							metadata: asset.metadata,
-							report: asset.report,
-							ready: true
-						},
-						{ ignoreDuplicates: true }
-					)
+				await db.from('kitchen_asset_revisions').upsert(
+					{
+						id: asset.revisionId,
+						identity_id: asset.identityId,
+						revision: 1,
+						metadata: asset.metadata,
+						report: asset.report,
+						ready: true
+					},
+					{ ignoreDuplicates: true }
+				)
 			);
 			check(
 				await db.from('kitchen_asset_variants').upsert(
@@ -184,20 +182,18 @@ try {
 					)
 			);
 			check(
-				await db
-					.from('game_recipe_revisions')
-					.upsert(
-						{
-							id: r.revisionId,
-							recipe_id: r.recipeId,
-							revision: 1,
-							definition: r,
-							checksum,
-							status: 'published',
-							report: { validated: true }
-						},
-						{ ignoreDuplicates: true }
-					)
+				await db.from('game_recipe_revisions').upsert(
+					{
+						id: r.revisionId,
+						recipe_id: r.recipeId,
+						revision: 1,
+						definition: r,
+						checksum,
+						status: 'published',
+						report: { validated: true }
+					},
+					{ ignoreDuplicates: true }
+				)
 			);
 			check(
 				await db

@@ -1,13 +1,14 @@
 <script lang="ts">
+	import { savePracticeAttempt } from '#lib/practice-history';
 	import { onMount, tick } from 'svelte';
-	import { base, resolve } from '$app/paths';
+	import { resolve } from '$app/paths';
 	import type { PageData } from './$types';
-	import type { Settings } from '$lib/math';
-	import { resolveMathSettings } from '$lib/math';
-	import { watchMathSettings } from '$lib/math-settings-sync';
-	import { generateSpaceProblem, PLANETS, problemHint } from '$lib/games/space-math/engine';
-	import ProblemVisual from '$lib/games/space-math/ProblemVisual.svelte';
-	import SpaceScene from '$lib/games/space-math/SpaceScene.svelte';
+	import type { Settings } from '#lib/math';
+	import { resolveMathSettings } from '#lib/math';
+	import { watchMathSettings } from '#lib/math-settings-sync';
+	import { generateSpaceProblem, PLANETS, problemHint } from '#lib/games/space-math/engine';
+	import ProblemVisual from '#lib/games/space-math/ProblemVisual.svelte';
+	import SpaceScene from '#lib/games/space-math/SpaceScene.svelte';
 
 	export let data: PageData;
 	let selectedUser: PageData['users'][number] | null = null;
@@ -75,24 +76,15 @@
 			void tick().then(() => continueButton?.focus({ preventScroll: true }));
 		}
 		const attemptSession = sessionId;
-		void fetch(`${base}/api/math`, {
-			method: 'POST',
-			keepalive: true,
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				childId: selectedUser.id,
-				sessionId,
-				operation: problem.op,
-				problemState: problem.state,
-				givenAnswer: answer
-			})
-		})
-			.then((response) => {
-				if (!response.ok) throw new Error('History save failed');
-			})
-			.catch(() => {
-				if (sessionId === attemptSession) historyError = true;
-			});
+		void savePracticeAttempt('math', {
+			childId: selectedUser.id,
+			sessionId,
+			operation: problem.op,
+			problemState: problem.state,
+			givenAnswer: answer
+		}).catch(() => {
+			if (sessionId === attemptSession) historyError = true;
+		});
 	}
 </script>
 

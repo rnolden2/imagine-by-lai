@@ -1,2 +1,2 @@
-import { parentData } from '$lib/server/games/parent';
+import { parentData } from '#lib/server/games/parent';
 export const load = parentData;

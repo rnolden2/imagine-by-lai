@@ -63,10 +63,10 @@
 	aria-label="Milestone reached, tap to continue"
 >
 	<!-- Comet trail -->
-	{#each trail as t}
-			<div
-				class="stage flight"
-				style="animation-delay:{t.delay}ms; opacity:{t.opacity}; --trail:{t.scale};"
+	{#each trail as t (t)}
+		<div
+			class="stage flight"
+			style="animation-delay:{t.delay}ms; opacity:{t.opacity}; --trail:{t.scale};"
 			aria-hidden="true"
 		>
 			<svg class="star trail-star" viewBox="0 0 24 24">
@@ -78,7 +78,7 @@
 	{/each}
 
 	<!-- Hero star: flies, centers, grows, then vanishes into dust -->
-		<div class="stage flight">
+	<div class="stage flight">
 		<svg class="star hero" viewBox="0 0 24 24">
 			<polygon
 				points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26"
@@ -90,11 +90,10 @@
 	<div class="flash" aria-hidden="true"></div>
 
 	<!-- Star dust -->
-	{#each dust as d}
+	{#each dust as d (d)}
 		<div
 			class="dust"
-			style="--dx:{d.x}vmin; --dy:{d.y}vmin; --rot:{d.rot}deg; animation-delay:{2900 +
-				d.delay}ms;"
+			style="--dx:{d.x}vmin; --dy:{d.y}vmin; --rot:{d.rot}deg; animation-delay:{2900 + d.delay}ms;"
 			aria-hidden="true"
 		>
 			<svg width={d.size} height={d.size} viewBox="0 0 24 24" fill={d.color}>

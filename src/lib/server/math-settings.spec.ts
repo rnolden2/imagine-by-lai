@@ -9,7 +9,7 @@ const db = vi.hoisted(() => ({
 	upsert: vi.fn(),
 	delete: vi.fn()
 }));
-vi.mock('$lib/server/db', () => ({
+vi.mock('#lib/server/db', () => ({
 	getSupabase: db.get,
 	throwSupabaseError: (_: string, error: unknown) => {
 		throw error;

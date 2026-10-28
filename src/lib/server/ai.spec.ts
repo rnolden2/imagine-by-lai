@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({
 	openaiKey: vi.fn(),
 	geminiKey: vi.fn()
 }));
-vi.mock('$env/dynamic/private', () => ({ env: mocks.env }));
-vi.mock('$lib/server/secrets', () => ({
+vi.mock('#lib/server/runtime-config', () => ({ env: mocks.env }));
+vi.mock('#lib/server/secrets', () => ({
 	getOpenAIApiKey: mocks.openaiKey,
 	getGeminiApiKey: mocks.geminiKey
 }));
@@ -19,11 +19,9 @@ vi.mock('openai', () => ({
 		images = { generate: mocks.images };
 	}
 }));
-vi.mock('@google/generative-ai', () => ({
-	GoogleGenerativeAI: class {
-		getGenerativeModel() {
-			return { generateContent: mocks.gemini };
-		}
+vi.mock('@google/genai', () => ({
+	GoogleGenAI: class {
+		models = { generateContent: mocks.gemini };
 	}
 }));
 
@@ -55,7 +53,8 @@ it('defaults to OpenAI for stories, including image-based stories, without loadi
 	expect(mocks.responses.mock.calls[0][0]).toMatchObject({
 		model: 'gpt-5.1',
 		input: 'Tell a story',
-		store: false
+		store: false,
+		max_output_tokens: 6000
 	});
 	expect(mocks.responses.mock.calls[1][0].input[0].content[1]).toMatchObject({
 		type: 'input_image',
@@ -63,6 +62,30 @@ it('defaults to OpenAI for stories, including image-based stories, without loadi
 	});
 	expect(mocks.openaiKey).toHaveBeenCalledOnce();
 	expect(mocks.geminiKey).not.toHaveBeenCalled();
+});
+
+it('reserves the selected provider before any story request and reserves fallback separately', async () => {
+	const { generateStoryText } = await import('./ai');
+	const calls: string[] = [];
+	const beforePrimary = vi.fn(async (provider: string) => {
+		calls.push(`reserve:${provider}`);
+	});
+	const beforeFallback = vi.fn(async () => {
+		calls.push('reserve:gemini');
+	});
+	mocks.responses.mockImplementation(async () => {
+		calls.push('request:openai');
+		throw new Error('Unavailable');
+	});
+	mocks.gemini.mockImplementation(async () => {
+		calls.push('request:gemini');
+		return { text: 'Fallback story' };
+	});
+
+	expect(await generateStoryText('A story', undefined, { beforePrimary, beforeFallback })).toBe(
+		'Fallback story'
+	);
+	expect(calls).toEqual(['reserve:openai', 'request:openai', 'reserve:gemini', 'request:gemini']);
 });
 
 it('returns PNG bytes for storage and honors configured OpenAI models', async () => {
@@ -82,16 +105,30 @@ it('returns PNG bytes for storage and honors configured OpenAI models', async ()
 
 it('rejects missing or invalid image bytes instead of saving corrupt images', async () => {
 	const { generateStoryImage } = await import('./ai');
-	mocks.gemini.mockResolvedValue({ response: { candidates: [] } });
+	mocks.gemini.mockResolvedValue({ candidates: [] });
 	mocks.images.mockResolvedValueOnce({ data: [] });
 	await expect(generateStoryImage('A puppy')).rejects.toThrow('AI_PROVIDERS_FAILED');
 	mocks.images.mockResolvedValueOnce({ data: [{ b64_json: 'bm90LWFuLWltYWdl' }] });
 	await expect(generateStoryImage('A puppy')).rejects.toThrow('AI_PROVIDERS_FAILED');
 });
 
+it('rejects invalid image bytes from Gemini when it is the primary provider', async () => {
+	mocks.env.AI_PROVIDER = 'gemini';
+	mocks.gemini.mockResolvedValue({
+		candidates: [
+			{
+				content: { parts: [{ inlineData: { data: Buffer.from('not png').toString('base64') } }] }
+			}
+		]
+	});
+	const { generateStoryImage } = await import('./ai');
+	await expect(generateStoryImage('A puppy')).rejects.toThrow('invalid PNG');
+	expect(mocks.images).not.toHaveBeenCalled();
+});
+
 it('falls back for provider failures and incomplete or empty text', async () => {
 	const { generateStoryText } = await import('./ai');
-	mocks.gemini.mockResolvedValue({ response: { text: () => 'Gemini story' } });
+	mocks.gemini.mockResolvedValue({ text: 'Gemini story' });
 	mocks.responses.mockRejectedValueOnce(new Error('Provider unavailable'));
 	expect(await generateStoryText('A story')).toBe('Gemini story');
 	mocks.responses.mockResolvedValueOnce({ status: 'incomplete', output_text: 'Partial story' });
@@ -105,7 +142,7 @@ it('requests structured definitions and rejects invalid definition content', asy
 	const { generateWordDefinition } = await import('./ai');
 	mocks.responses.mockResolvedValueOnce({
 		status: 'completed',
-		output_text: '{"phonetic":"kat","definition":"A small furry animal."}'
+		output_text: '{"phonetic":"  kat  ","definition":"  A small furry animal.  "}'
 	});
 	expect(await generateWordDefinition('cat')).toEqual({
 		phonetic: 'kat',
@@ -116,29 +153,46 @@ it('requests structured definitions and rejects invalid definition content', asy
 		strict: true
 	});
 	mocks.responses.mockResolvedValueOnce({ output_text: '{"phonetic":42,"definition":""}' });
-	mocks.gemini.mockResolvedValue({ response: { text: () => '{"phonetic":42}' } });
+	mocks.gemini.mockResolvedValue({ text: '{"phonetic":42}' });
+	await expect(generateWordDefinition('cat')).rejects.toThrow('AI_PROVIDERS_FAILED');
+
+	const oversized = JSON.stringify({ phonetic: 'p'.repeat(161), definition: 'd'.repeat(1001) });
+	mocks.responses.mockResolvedValueOnce({ status: 'completed', output_text: oversized });
+	mocks.gemini.mockResolvedValueOnce({ text: oversized });
 	await expect(generateWordDefinition('cat')).rejects.toThrow('AI_PROVIDERS_FAILED');
 });
 
 it('switches all generation back to Gemini without accessing OpenAI credentials', async () => {
 	mocks.env.AI_PROVIDER = 'gemini';
 	const { generateStoryText, generateStoryImage, generateWordDefinition } = await import('./ai');
-	mocks.gemini.mockResolvedValueOnce({ response: { text: () => 'Gemini story' } });
+	mocks.gemini.mockResolvedValueOnce({ text: 'Gemini story' });
 	expect(await generateStoryText('Use this picture', png)).toBe('Gemini story');
-	expect(mocks.gemini.mock.calls[0][0][1].inlineData.data).toBe(png.toString('base64'));
+	expect(mocks.gemini.mock.calls[0][0].contents.parts[1].inlineData.data).toBe(
+		png.toString('base64')
+	);
 	mocks.gemini.mockResolvedValueOnce({
-		response: {
-			candidates: [{ content: { parts: [{ inlineData: { data: png.toString('base64') } }] } }]
-		}
+		candidates: [{ content: { parts: [{ inlineData: { data: png.toString('base64') } }] } }]
 	});
 	expect(await generateStoryImage('A puppy')).toEqual(png);
 	mocks.gemini.mockResolvedValueOnce({
-		response: { text: () => '```json\n{"phonetic":"kat","definition":"An animal."}\n```' }
+		text: '```json\n{"phonetic":"kat","definition":"An animal."}\n```'
 	});
 	expect(await generateWordDefinition('cat')).toEqual({
 		phonetic: 'kat',
 		definition: 'An animal.'
 	});
+	expect(mocks.gemini.mock.calls.map(([request]) => request.model)).toEqual([
+		'gemini-2.5-pro',
+		'gemini-2.5-flash-image',
+		'gemini-2.5-pro'
+	]);
+	for (const [request] of mocks.gemini.mock.calls) {
+		expect(request.config).toMatchObject({
+			automaticContinuation: false,
+			httpOptions: { retryOptions: { attempts: 1 } }
+		});
+		expect(request.config.httpOptions.timeout).toBeGreaterThan(0);
+	}
 	expect(mocks.openaiKey).not.toHaveBeenCalled();
 	expect(mocks.responses).not.toHaveBeenCalled();
 	expect(mocks.images).not.toHaveBeenCalled();
@@ -160,11 +214,13 @@ it.each([
 ])('uses Gemini when OpenAI rejects with %s', async (code) => {
 	const { generateStoryText } = await import('./ai');
 	mocks.responses.mockRejectedValue(Object.assign(new Error('Private provider details'), { code }));
-	mocks.gemini.mockResolvedValue({ response: { text: () => 'Fallback story' } });
+	mocks.gemini.mockResolvedValue({ text: 'Fallback story' });
 	expect(await generateStoryText('Private prompt', png)).toBe('Fallback story');
 	expect(mocks.responses).toHaveBeenCalledTimes(1);
 	expect(mocks.gemini).toHaveBeenCalledTimes(1);
-	expect(mocks.gemini.mock.calls[0][0][1].inlineData.data).toBe(png.toString('base64'));
+	expect(mocks.gemini.mock.calls[0][0].contents.parts[1].inlineData.data).toBe(
+		png.toString('base64')
+	);
 	expect(console.warn).toHaveBeenCalledWith('ai.fallback', {
 		operation: 'story_text',
 		from: 'openai',
@@ -178,19 +234,17 @@ it('falls back for images, definitions and kitchen planning while reporting asse
 	mocks.images.mockRejectedValue(new Error('Unavailable'));
 	mocks.responses.mockRejectedValue(new Error('Unavailable'));
 	const geminiImage = {
-		response: {
-			candidates: [{ content: { parts: [{ inlineData: { data: png.toString('base64') } }] } }]
-		}
+		candidates: [{ content: { parts: [{ inlineData: { data: png.toString('base64') } }] } }]
 	};
 	mocks.gemini.mockResolvedValueOnce(geminiImage);
 	expect(await generateStoryImage('Picture')).toEqual(png);
 	mocks.gemini.mockResolvedValueOnce({
-		response: { text: () => '{"phonetic":"kat","definition":"Animal"}' }
+		text: '{"phonetic":"kat","definition":"Animal"}'
 	});
 	expect(await generateWordDefinition('cat')).toEqual({ phonetic: 'kat', definition: 'Animal' });
 	const reserve = vi.fn().mockResolvedValue(undefined),
 		onProvider = vi.fn();
-	mocks.gemini.mockResolvedValueOnce({ response: { text: () => '{"supported":true}' } });
+	mocks.gemini.mockResolvedValueOnce({ text: '{"supported":true}' });
 	expect(await generateGamePlan('Pizza', {}, { beforeFallback: reserve })).toEqual({
 		supported: true
 	});
@@ -200,7 +254,7 @@ it('falls back for images, definitions and kitchen planning while reporting asse
 	);
 	expect(reserve).toHaveBeenCalledTimes(2);
 	expect(onProvider).toHaveBeenCalledWith('gemini');
-	expect(mocks.gemini.mock.calls[3][0]).toContain('transparent background');
+	expect(mocks.gemini.mock.calls[3][0].contents).toContain('transparent background');
 });
 
 it('stops before purchasing Gemini work if the kitchen fallback reservation is rejected', async () => {
@@ -241,8 +295,11 @@ it('leaves time for Gemini after an OpenAI timeout within the overall deadline',
 		vi.setSystemTime(Date.now() + 45_000);
 		throw new Error('Timeout');
 	});
-	mocks.gemini.mockResolvedValue({ response: { text: () => '{}' } });
+	mocks.gemini.mockResolvedValue({ text: '{}' });
 	expect(await generateGamePlan('Pizza', {})).toEqual({});
 	expect(mocks.responses.mock.calls[0][1]).toEqual({ timeout: 45_000 });
-	expect(mocks.gemini.mock.calls[0][1]).toEqual({ timeout: 45_000 });
+	expect(mocks.gemini.mock.calls[0][0].config).toMatchObject({
+		automaticContinuation: false,
+		httpOptions: { timeout: 45_000, retryOptions: { attempts: 1 } }
+	});
 });

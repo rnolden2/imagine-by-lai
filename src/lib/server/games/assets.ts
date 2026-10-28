@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Storage } from '@google-cloud/storage';
 import sharp from 'sharp';
-import { getSupabase } from '$lib/server/db';
-import { GCS_BUCKET_NAME } from '$lib/server/secrets';
+import { getSupabase } from '#lib/server/db';
+import { GCS_BUCKET_NAME } from '#lib/server/secrets';
 import { checkResult, rpc } from './common';
-import type { Recipe } from '$lib/games/word-kitchen/contracts';
+import type { Recipe } from '#lib/games/word-kitchen/contracts';
 
-const storage = new Storage();
+let storage: Storage | undefined;
+function assetStorage() {
+	return (storage ??= new Storage());
+}
 export const sha = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 export type AssetManifest = Record<
 	string,
@@ -23,33 +26,55 @@ export async function deliveryManifest(recipe: Recipe): Promise<AssetManifest> {
 	const db = await getSupabase();
 	const ids = recipe.assetRequirements.map((a) => a.assetRevisionId);
 	const variants = checkResult(
-		await db.from('kitchen_asset_variants').select('*').in('revision_id', ids).eq('label', '512')
+		await db
+			.from('kitchen_asset_variants')
+			.select('revision_id,object_path,generation')
+			.in('revision_id', ids)
+			.eq('label', '512')
 	);
 	const expiresAt = new Date(Date.now() + 3600000).toISOString();
 	const manifest: AssetManifest = {};
-	for (const asset of recipe.assetRequirements) {
-		const variant = variants?.find((v) => v.revision_id === asset.assetRevisionId);
+	const variantsByRevision = new Map(variants?.map((variant) => [variant.revision_id, variant]));
+	const urlsByRevision = new Map<string, Promise<string>>();
+	const deliveryUrl = (revisionId: string) => {
+		const existing = urlsByRevision.get(revisionId);
+		if (existing) return existing;
+		const variant = variantsByRevision.get(revisionId);
 		if (!variant) throw new Error('ASSET_NOT_READY');
+		let pending: Promise<string>;
 		// Seeded immutable public app assets require no private bucket access.
-		let url: string;
 		if (variant.object_path.startsWith('static/word-kitchen/'))
-			url = `/${variant.object_path.slice(7)}`;
+			pending = Promise.resolve(`/${variant.object_path.slice(7)}`);
 		else {
 			if (!variant.object_path.startsWith('imagine-by-lai/word-kitchen/'))
 				throw new Error('INVALID_ASSET_PATH');
-			[url] = await storage
+			pending = assetStorage()
 				.bucket(GCS_BUCKET_NAME)
 				.file(variant.object_path, { generation: variant.generation })
-				.getSignedUrl({ version: 'v4', action: 'read', expires: Date.parse(expiresAt) });
+				.getSignedUrl({ version: 'v4', action: 'read', expires: Date.parse(expiresAt) })
+				.then(([url]) => url);
 		}
-		manifest[asset.role] = {
-			conceptId: asset.conceptId,
-			revisionId: asset.assetRevisionId,
-			url,
-			expiresAt,
-			width: 512,
-			label: asset.conceptId.split(':')[1].replaceAll('-', ' ')
-		};
+		urlsByRevision.set(revisionId, pending);
+		return pending;
+	};
+	for (let offset = 0; offset < recipe.assetRequirements.length; offset += 8) {
+		const entries = await Promise.all(
+			recipe.assetRequirements.slice(offset, offset + 8).map(
+				async (asset) =>
+					[
+						asset.role,
+						{
+							conceptId: asset.conceptId,
+							revisionId: asset.assetRevisionId,
+							url: await deliveryUrl(asset.assetRevisionId),
+							expiresAt,
+							width: 512,
+							label: asset.conceptId.split(':')[1].replaceAll('-', ' ')
+						}
+					] as const
+			)
+		);
+		for (const [role, entry] of entries) manifest[role] = entry;
 	}
 	return manifest;
 }
@@ -136,25 +161,23 @@ export async function publishGeneratedAsset(
 	const result = await processMaster(input, opaque);
 	const revision = randomUUID();
 	const prefix = `imagine-by-lai/word-kitchen/assets/${identityId}/${revision}`;
-	const bucket = storage.bucket(GCS_BUCKET_NAME);
+	const bucket = assetStorage().bucket(GCS_BUCKET_NAME);
 	const variants = [];
 	const masterPath = `${prefix}/master.png`;
-	await bucket
-		.file(masterPath)
-		.save(result.master, {
-			contentType: 'image/png',
-			resumable: false,
- timeout:20000,
-			preconditionOpts: { ifGenerationMatch: 0 }
-		});
-	const [masterMeta]=await bucket.file(masterPath).getMetadata();
- for (const v of result.variants) {
+	await bucket.file(masterPath).save(result.master, {
+		contentType: 'image/png',
+		resumable: false,
+		timeout: 20000,
+		preconditionOpts: { ifGenerationMatch: 0 }
+	});
+	const [masterMeta] = await bucket.file(masterPath).getMetadata();
+	for (const v of result.variants) {
 		const path = `${prefix}/${v.label}.webp`;
 		const file = bucket.file(path);
 		await file.save(v.bytes, {
 			contentType: 'image/webp',
 			resumable: false,
- timeout:20000,
+			timeout: 20000,
 			preconditionOpts: { ifGenerationMatch: 0 },
 			metadata: { cacheControl: 'private,max-age=31536000,immutable' }
 		});
@@ -176,7 +199,12 @@ export async function publishGeneratedAsset(
 		p_identity: identityId,
 		p_token: token,
 		p_revision: revision,
-		p_metadata: { ...result.metadata, masterPath, masterGeneration:masterMeta.generation, provenance },
+		p_metadata: {
+			...result.metadata,
+			masterPath,
+			masterGeneration: masterMeta.generation,
+			provenance
+		},
 		p_report: result.report,
 		p_variants: variants
 	});

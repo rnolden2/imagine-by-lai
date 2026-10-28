@@ -22,7 +22,8 @@ export async function speak(text: string, slow = false): Promise<void> {
 		const res = await fetch('/api/tts', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ text, slow })
+			body: JSON.stringify({ text, slow }),
+			signal: AbortSignal.timeout(35_000)
 		});
 
 		if (!res.ok) throw new Error(`TTS API returned ${res.status}`);
@@ -32,21 +33,30 @@ export async function speak(text: string, slow = false): Promise<void> {
 		const audio = new Audio(url);
 		currentAudio = audio;
 
-		await new Promise<void>((resolve) => {
-			audio.onended = () => {
+		await new Promise<void>((resolve, reject) => {
+			let settled = false;
+			const cleanup = () => {
 				URL.revokeObjectURL(url);
 				if (currentAudio === audio) currentAudio = null;
+			};
+			const finish = () => {
+				if (settled) return;
+				settled = true;
+				cleanup();
 				resolve();
 			};
-			audio.onerror = () => {
-				URL.revokeObjectURL(url);
-				if (currentAudio === audio) currentAudio = null;
-				resolve();
+			const fail = () => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				reject(new Error('Audio playback failed'));
 			};
-			audio.play().catch(() => resolve());
+			audio.onended = finish;
+			audio.onerror = fail;
+			void audio.play().catch(fail);
 		});
-	} catch (err) {
-		console.warn('Google TTS failed, falling back to browser speech:', err);
+	} catch {
+		console.warn('speech.cloud_fallback');
 		browserSpeak(text, slow);
 	}
 }

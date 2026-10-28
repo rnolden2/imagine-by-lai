@@ -1,13 +1,24 @@
 import { defineConfig } from '@playwright/test';
+import { existsSync } from 'node:fs';
 
 export default defineConfig({
 	testDir: 'e2e',
-	testMatch: ['math-settings.test.ts', 'space-math.test.ts'],
+	testMatch: [
+		'math-settings.test.ts',
+		'space-math.test.ts',
+		'application-security.test.ts',
+		'reading-spelling.test.ts'
+	],
 	workers: 1,
 	use: {
 		baseURL: 'http://localhost:4175',
+		extraHTTPHeaders: { 'x-forwarded-proto': 'http' },
 		browserName: 'chromium',
-		channel: process.env.PLAYWRIGHT_CHANNEL,
+		channel:
+			process.env.PLAYWRIGHT_CHANNEL ??
+			(existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+				? 'chrome'
+				: undefined),
 		headless: true
 	},
 	webServer: {
@@ -19,7 +30,7 @@ export default defineConfig({
 			MATH_BROWSER_TEST: '1',
 			HOST: 'localhost',
 			PORT: '4175',
-			ORIGIN: 'http://localhost:4175',
+			PROTOCOL_HEADER: 'x-forwarded-proto',
 			ADMIN_PASSWORD: 'math-browser-test-password',
 			SUPABASE_URL: 'https://math-tests.supabase.co',
 			SUPABASE_SERVICE_ROLE_KEY: 'math-browser-test-server-key-never-use-in-production',

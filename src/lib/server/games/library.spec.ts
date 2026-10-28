@@ -1,14 +1,22 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import type { RequestEvent } from '@sveltejs/kit';
 import { curatedRecipes } from './curated';
+import type { Recipe } from '#lib/games/word-kitchen/contracts';
 
-const mocks = vi.hoisted(() => ({ db: null as SupabaseClient | null }));
-vi.mock('$lib/server/db', () => ({ getSupabase: async () => mocks.db }));
-vi.mock('./assets', () => ({ deliveryManifest: async () => ({}) }));
+const mocks = vi.hoisted(() => ({
+	db: null as SupabaseClient | null,
+	deliveryManifest: vi.fn(async (recipe: Recipe) => {
+		void recipe;
+		return {};
+	})
+}));
+vi.mock('#lib/server/db', () => ({ getSupabase: async () => mocks.db }));
+vi.mock('./assets', () => ({ deliveryManifest: mocks.deliveryManifest }));
 import { library } from './library';
+import { parentData } from './parent';
 import { startSession } from './sessions';
 import { hash } from './common';
 
@@ -16,7 +24,7 @@ const originalFetch = globalThis.fetch;
 const originalFixtureMode = process.env.WORD_KITCHEN_BROWSER_TEST;
 let db: PGlite;
 const deviceId = randomUUID();
-const token = 'shared-library-test-device';
+const token = randomBytes(32).toString('base64url');
 const parent = { locals: { user: { isAdmin: true } } } as RequestEvent;
 const device = {
 	locals: {},
@@ -89,6 +97,18 @@ it('shares generated recipes with every chef and exposes their grade guidance wi
 	expect((await db.query('select * from game_recipe_assignments')).rows).toHaveLength(0);
 });
 
+it('resolves each recipe delivery manifest once when multiple children can use it', async () => {
+	mocks.deliveryManifest.mockClear();
+	const result = await library(parent);
+	const revisionIds = mocks.deliveryManifest.mock.calls.map(([recipe]) => recipe.revisionId);
+	expect(revisionIds).toHaveLength(new Set(revisionIds).size);
+	expect(
+		[...new Set(result.cards.map((card) => card.revisionId))].some(
+			(revisionId) => result.cards.filter((card) => card.revisionId === revisionId).length > 1
+		)
+	).toBe(true);
+});
+
 it('lets an unlocked kindergarten chef play another chef’s grade 6–8 recipe with their own learning words', async () => {
 	const cards = await library(device);
 	expect(cards.children.map((child) => Number(child.id))).toEqual([2]);
@@ -138,6 +158,49 @@ it('continues to apply the playing chef’s food exclusions to shared recipes', 
 		await db.query('delete from game_child_settings where child_id=2');
 	}
 });
+
+it('reports parent evidence truncation only when more than 5,000 recent attempts exist', async () => {
+	const sessionId = randomUUID();
+	await db.query(
+		`insert into game_sessions(
+			id,child_id,recipe_revision_id,snapshot,state,status,start_key,request_hash,preference_revision
+		) values($1,1,$2,$3,$4,'completed',$5,'parent-volume-fixture',0)`,
+		[
+			sessionId,
+			shared.revisionId,
+			JSON.stringify({ recipe: { title: 'Parent volume fixture' } }),
+			JSON.stringify({ activeMs: 1 }),
+			randomUUID()
+		]
+	);
+	await db.query(
+		`insert into game_attempts(
+			session_id,child_id,step_id,submission,word,word_source,skill,mechanic,
+			correct,assistance,review,first_try
+		)
+		select $1,1,'volume-step',n,'word-'||n,'fixture','spelling','word_spell',
+			true,'independent',false,true
+		from generate_series(1,5001) n`,
+		[sessionId]
+	);
+	try {
+		const truncated = await parentData(parent);
+		expect(truncated.evidenceTruncated).toBe(true);
+		expect(
+			truncated.profiles.find((profile) => Number(profile.id) === 1)?.sessions[0].evidence
+		).toHaveLength(5000);
+		await db.query('delete from game_attempts where session_id=$1 and submission=5001', [
+			sessionId
+		]);
+		const complete = await parentData(parent);
+		expect(complete.evidenceTruncated).toBe(false);
+		expect(
+			complete.profiles.find((profile) => Number(profile.id) === 1)?.sessions[0].evidence
+		).toHaveLength(5000);
+	} finally {
+		await db.query('delete from game_sessions where id=$1', [sessionId]);
+	}
+}, 30000);
 
 it('loads the shared library past its first page', async () => {
 	const recipes = Array.from({ length: 501 }, (_, index) => ({

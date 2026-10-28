@@ -1,27 +1,13 @@
 import { createHash } from 'node:crypto';
 import { error, type RequestEvent } from '@sveltejs/kit';
-import { getSupabase } from '$lib/server/db';
+import { getSupabase } from '#lib/server/db';
 import { z } from 'zod';
+export { readBody, requireOrigin } from '#lib/server/request';
 
 export const hash = (value: unknown) =>
 	createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function requireParent(event: RequestEvent) {
 	if (!event.locals.user?.isAdmin) error(403, 'Parent access required.');
-}
-export function requireOrigin(event: RequestEvent) {
-	if (event.request.headers.get('origin') !== event.url.origin)
-		error(403, 'Same-origin request required.');
-}
-export async function readBody<T>(event: RequestEvent, schema: z.ZodType<T>): Promise<T> {
-	if (Number(event.request.headers.get('content-length') ?? 0) > 65536)
-		error(413, 'Request is too large.');
-	const text = await event.request.text();
-	if (text.length > 65536) error(413, 'Request is too large.');
-	try {
-		return schema.parse(JSON.parse(text));
-	} catch {
-		error(400, 'Invalid request.');
-	}
 }
 export async function rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
 	const db = await getSupabase();

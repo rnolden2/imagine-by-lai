@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import GenerationAllowance from '$lib/games/word-kitchen/GenerationAllowance.svelte';
+	import GenerationAllowance from '#lib/games/word-kitchen/GenerationAllowance.svelte';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
 </script>

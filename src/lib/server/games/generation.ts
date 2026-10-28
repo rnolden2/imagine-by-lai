@@ -1,13 +1,47 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { env } from '$env/dynamic/private';
+import { env } from '#lib/server/runtime-config';
 import { error } from '@sveltejs/kit';
-import { getSupabase } from '$lib/server/db';
-import { generateGameImage, generateGamePlan } from '$lib/server/ai';
-import { vocabularySchema, validateRecipe, type Recipe } from '$lib/games/word-kitchen/contracts';
+import { getSupabase } from '#lib/server/db';
+import { requireWorkerConfig } from '#lib/server/worker';
+import { requireKitchenGeneration } from '#lib/server/game-availability';
+import { generateGameImage, generateGamePlan } from '#lib/server/ai';
+import { vocabularySchema, validateRecipe, type Recipe } from '#lib/games/word-kitchen/contracts';
 import { buildRecipe, concepts, conceptMap, stableId } from './curated';
 import { learningContext } from './learning-context';
 import { compatible } from './sessions';
+
+const parentFailureCodes = new Set(['AMBIGUOUS_CONCEPT', 'RECIPE_BLOCKED', 'PREFERENCES_CHANGED']);
+const terminalFailureCodes = [
+	...parentFailureCodes,
+	'BUDGET_EXCEEDED',
+	'BUDGET_NOT_CONFIGURED',
+	'ASSET_SIZE_BUDGET',
+	'UNCERTAIN_PROVIDER_RESULT',
+	'AI_PROVIDERS_FAILED',
+	'AI_GENERATION_TIMEOUT',
+	'AI_REQUEST_REFUSED',
+	'MISSING_ASSET_CONCEPT',
+	'ASSET_LIMIT',
+	'PROVIDER_CREDITS_EXHAUSTED',
+	'STALE_LEASE'
+] as const;
+
+export function classifyGenerationFailure(cause: unknown) {
+	const providerCode = (cause as { code?: unknown })?.code;
+	if (providerCode === 'credit_balance_exhausted' || providerCode === 'insufficient_quota')
+		return { code: 'PROVIDER_CREDITS_EXHAUSTED', terminal: true, needsParent: false } as const;
+
+	const candidates = [
+		(cause as { body?: { message?: unknown } })?.body?.message,
+		cause instanceof Error ? cause.message : undefined
+	].filter((value): value is string => typeof value === 'string');
+	const code = terminalFailureCodes.find((known) =>
+		candidates.some((candidate) => candidate.includes(known))
+	);
+	if (!code) return { code: 'GENERATION_FAILED', terminal: false, needsParent: false } as const;
+	return { code, terminal: true, needsParent: parentFailureCodes.has(code) } as const;
+}
 import { checkResult, rpc, hash } from './common';
 import { publishGeneratedAsset } from './assets';
 
@@ -89,15 +123,8 @@ export const generationPolicy = {
 	textReservation: 0.3,
 	maxNewAssets: 12
 };
-export function requireWorkerConfig() {
-	for (const key of [
-		'WORD_KITCHEN_TASK_QUEUE',
-		'WORD_KITCHEN_WORKER_URL',
-		'WORD_KITCHEN_WORKER_SERVICE_ACCOUNT'
-	])
-		if (!env[key]) error(503, 'Game generation is not configured yet.');
-}
 export async function enqueueGeneration(childId: number, favoriteId: string, key: string) {
+	requireKitchenGeneration();
 	requireWorkerConfig();
 	const db = await getSupabase();
 	const favorite = checkResult(
@@ -158,6 +185,7 @@ async function checkpoint(
 async function reserve(job: Job, key: string, estimate: number) {
 	const fresh = await rpc<boolean>('wk_reserve_cost', {
 		p_job: job.id,
+		p_token: job.lease_token,
 		p_key: `${job.id}:${key}`,
 		p_estimate: estimate,
 		p_job_cap: generationPolicy.jobCap,
@@ -182,18 +210,16 @@ export async function assetIdentity(conceptId: string, state = 'whole') {
 		contract: 'kitchen-asset.v1'
 	};
 	checkResult(
-		await db
-			.from('kitchen_asset_identities')
-			.upsert(identity, {
-				onConflict: 'concept_id,state,style,view,contract',
-				ignoreDuplicates: true
-			}),
+		await db.from('kitchen_asset_identities').upsert(identity, {
+			onConflict: 'concept_id,state,style,view,contract',
+			ignoreDuplicates: true
+		}),
 		'asset_identity.upsert'
 	);
 	return checkResult(
 		await db
 			.from('kitchen_asset_identities')
-			.select('*')
+			.select('id,ready_revision_id')
 			.eq('concept_id', conceptId)
 			.eq('state', state)
 			.eq('style', identity.style)
@@ -226,7 +252,11 @@ async function registerPlan(job: Job, plan: Plan) {
 		)
 			throw new Error('AMBIGUOUS_CONCEPT');
 		const existing = checkResult(
-			await db.from('kitchen_concepts').select('*').eq('id', item.canonicalId).maybeSingle()
+			await db
+				.from('kitchen_concepts')
+				.select('id,kind,label,tags')
+				.eq('id', item.canonicalId)
+				.maybeSingle()
 		);
 		const concept = existing ?? {
 			id: item.canonicalId,
@@ -268,11 +298,38 @@ async function registerPlan(job: Job, plan: Plan) {
 		throw new Error('RECIPE_BLOCKED');
 	return validateRecipe(recipe);
 }
-async function withHeartbeat<T>(job:Job,work:()=>Promise<T>,asset?:{id:string;token:number}):Promise<T>{
- let lost=false;const timer=setInterval(()=>{void rpc<boolean>('wk_heartbeat',{p_job:job.id,p_token:job.lease_token,p_asset:asset?.id??null,p_asset_token:asset?.token??null}).then(ok=>{if(!ok)lost=true;}).catch(()=>{lost=true;});},60000);
- try{const result=await work();if(lost)throw new Error('STALE_LEASE');return result;}finally{clearInterval(timer);}
+async function withHeartbeat<T>(
+	job: Job,
+	work: () => Promise<T>,
+	asset?: { id: string; token: number }
+): Promise<T> {
+	let lost = false;
+	const timer = setInterval(() => {
+		void rpc<boolean>('wk_heartbeat', {
+			p_job: job.id,
+			p_token: job.lease_token,
+			p_asset: asset?.id ?? null,
+			p_asset_token: asset?.token ?? null
+		})
+			.then((ok) => {
+				if (!ok) lost = true;
+			})
+			.catch(() => {
+				lost = true;
+			});
+	}, 60000);
+	try {
+		const result = await work();
+		if (lost) throw new Error('STALE_LEASE');
+		return result;
+	} finally {
+		clearInterval(timer);
+	}
 }
 export async function runGeneration(jobId: string) {
+	// Reject before claiming a lease or reserving spending; Cloud Tasks can retry
+	// after operators re-enable generation without losing the persisted stage.
+	requireKitchenGeneration();
 	const job = await rpc<Job | null>('wk_claim_job', { p_id: jobId });
 	if (!job) return;
 	const db = await getSupabase();
@@ -301,7 +358,14 @@ export async function runGeneration(jobId: string) {
 						else strict(value);
 				};
 				strict(schema);
-				job.checkpoint.plan = planSchema.parse(await withHeartbeat(job,()=>generateGamePlan(prompt, schema, { beforeFallback: () => reserve(job, 'planning:gemini', generationPolicy.textReservation) })));
+				job.checkpoint.plan = planSchema.parse(
+					await withHeartbeat(job, () =>
+						generateGamePlan(prompt, schema, {
+							beforeFallback: () =>
+								reserve(job, 'planning:gemini', generationPolicy.textReservation)
+						})
+					)
+				);
 				if (!job.checkpoint.plan.supported) {
 					await checkpoint(job, 'planning', 'needs_parent_input', 'UNSUPPORTED_FAVORITE');
 					return;
@@ -356,11 +420,26 @@ export async function runGeneration(jobId: string) {
 								.single()
 						);
 						let assetProvider = env.AI_PROVIDER ?? 'openai';
-						const bytes = await withHeartbeat(job,()=>generateGameImage(
-							assetPrompt(concept!.label, requirement.state),
-							!requirement.conceptId.startsWith('environment:'),
-							{ beforeFallback: () => reserve(job, `asset:${identity.id}:gemini`, generationPolicy.imageReservation), onProvider: (provider) => { assetProvider = provider; } }
-						),{id:identity.id,token:lease.lease_token});
+						const bytes = await withHeartbeat(
+							job,
+							() =>
+								generateGameImage(
+									assetPrompt(concept!.label, requirement.state),
+									!requirement.conceptId.startsWith('environment:'),
+									{
+										beforeFallback: () =>
+											reserve(
+												job,
+												`asset:${identity.id}:gemini`,
+												generationPolicy.imageReservation
+											),
+										onProvider: (provider) => {
+											assetProvider = provider;
+										}
+									}
+								),
+							{ id: identity.id, token: lease.lease_token }
+						);
 						revisionId = await publishGeneratedAsset(
 							identity.id,
 							lease.lease_token,
@@ -403,28 +482,21 @@ export async function runGeneration(jobId: string) {
 				throw new Error('INVALID_STAGE');
 		}
 	} catch (cause) {
-		const providerCode=(cause as {code?:string})?.code;
- const code=providerCode==='credit_balance_exhausted'||providerCode==='insufficient_quota'?'PROVIDER_CREDITS_EXHAUSTED':(cause as {body?:{message?:string}})?.body?.message??(cause instanceof Error?cause.message:'GENERATION_FAILED');
-		const parentCodes = ['AMBIGUOUS_CONCEPT', 'RECIPE_BLOCKED', 'PREFERENCES_CHANGED'];
-		const terminal =
-			parentCodes.includes(code) ||
-			code.includes('BUDGET') ||
-			code === 'UNCERTAIN_PROVIDER_RESULT' ||
-			['AI_PROVIDERS_FAILED', 'AI_GENERATION_TIMEOUT', 'AI_REQUEST_REFUSED', 'MISSING_ASSET_CONCEPT'].includes(code)||code === 'ASSET_LIMIT'||code==='PROVIDER_CREDITS_EXHAUSTED'||code==='STALE_LEASE';
+		const failure = classifyGenerationFailure(cause);
 		console.error('word-kitchen.generation', {
 			jobId: job.id,
 			stage: job.stage,
-			code: terminal ? code : 'GENERATION_FAILED'
+			code: failure.code
 		});
 		await checkpoint(
 			job,
 			job.stage,
-			parentCodes.includes(code)
+			failure.needsParent
 				? 'needs_parent_input'
-				: terminal || job.attempts >= 2
+				: failure.terminal || job.attempts >= 2
 					? 'failed'
 					: 'retry_wait',
-			terminal ? code : 'GENERATION_FAILED',
+			failure.code,
 			Math.min(120, 15 * 2 ** job.attempts)
 		);
 	}

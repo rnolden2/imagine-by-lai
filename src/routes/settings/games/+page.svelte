@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import { invalidateAll, goto } from '$app/navigation';
-	import GenerationAllowance from '$lib/games/word-kitchen/GenerationAllowance.svelte';
+	import GenerationAllowance from '#lib/games/word-kitchen/GenerationAllowance.svelte';
 	import type { PageData } from './$types';
 	let { data }: { data: PageData } = $props();
 	let selected = $state(0);
@@ -17,14 +18,16 @@
 			const r = await fetch('/api/settings/games', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(body)
+				body: JSON.stringify(body),
+				signal: AbortSignal.timeout(15_000)
 			});
 			const b = await r.json();
 			if (!r.ok) throw new Error(b.message ?? 'Could not save.');
 			await invalidateAll();
 			message = 'Saved.';
 			if (body.action === 'favorite') favorite = '';
-			if (body.action === 'generate') await goto(`/settings/games/word-kitchen/jobs/${b.id}`);
+			if (body.action === 'generate')
+				await goto(resolve('/settings/games/word-kitchen/jobs/[jobId]', { jobId: String(b.id) }));
 		} catch (e) {
 			message = e instanceof Error ? e.message : 'Connection interrupted.';
 		} finally {
@@ -35,22 +38,34 @@
 
 <svelte:head><title>Parent kitchen · Game settings</title></svelte:head>
 <section class="mx-auto max-w-5xl px-6 py-10">
-	<a href="/settings" class="font-bold text-teal-800">← Settings</a>
+	<a href={resolve('/settings')} class="font-bold text-teal-800">← Settings</a>
 	<h1 class="my-6 text-4xl font-extrabold text-teal-950">The parent kitchen</h1>
 	<p class="mb-6 text-slate-600">
 		Choose the practice, set food preferences, and make room for imagination.
 	</p>
-	<nav class="mb-8 flex flex-wrap gap-5 font-bold text-teal-800">
-		<a href="/games/word-kitchen">Play Word Kitchen</a><a
-			href="/settings/games/word-kitchen/recipes">Recipe reviews & generation</a
+	<nav aria-label="Game settings" class="mb-8 flex flex-wrap gap-5 font-bold text-teal-800">
+		{#if data.gameAvailability.kitchen}<a href={resolve('/games/word-kitchen')}>Play Word Kitchen</a
+			>{/if}<a href={resolve('/settings/games/word-kitchen/recipes')}>Recipe reviews & generation</a
 		>
 	</nav>
 	<GenerationAllowance quota={data.generationQuota} />
+	{#if !data.gameAvailability.generation}<p role="status" class="my-4">
+			Creating new recipes is temporarily unavailable. Existing jobs can still be reviewed or
+			cancelled.
+		</p>{/if}
+	{#if data.evidenceTruncated}
+		<p role="status" class="my-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+			The detailed evidence view reached its 5,000-attempt safety limit. Point totals remain
+			complete, but the detailed word and session breakdown below includes only the newest 5,000
+			attempts.
+		</p>
+	{/if}
 	<p role="status" class="my-4">{message}</p>
 	{#if child}<label class="font-bold"
 			>Child <select bind:value={selected} class="ml-3 rounded-xl"
-				><option value={0}>Choose a child</option>{#each data.profiles as profile}<option
-						value={Number(profile.id)}>{profile.name}</option
+				><option value={0}>Choose a child</option
+				>{#each data.profiles as profile (profile.id)}<option value={Number(profile.id)}
+						>{profile.name}</option
 					>{/each}</select
 			></label
 		>
@@ -99,7 +114,7 @@
 							Preferences apply to pretend games. They are not dietary advice.
 						</p>
 						<div class="grid grid-cols-2 gap-2">
-							{#each data.exclusions as item}<label
+							{#each data.exclusions as item (item.id)}<label
 									><input
 										type="checkbox"
 										name="exclude"
@@ -107,7 +122,7 @@
 										checked={child.settings.excludedFoodConceptIds.includes(item.id)}
 									/>
 									{item.label}</label
-								>{/each}{#each ['dairy', 'egg', 'wheat'] as tag}<label
+								>{/each}{#each ['dairy', 'egg', 'wheat'] as tag (tag)}<label
 									><input
 										type="checkbox"
 										name="exclude"
@@ -143,15 +158,14 @@
 					/><button disabled={busy} class="rounded-xl bg-amber-100 px-4 font-bold">Add</button>
 				</form>
 				<p class="text-sm text-slate-600">
-					Adding a favorite is free. “Create game” starts paid AI generation, with a $2 reserved
-					budget per job and a $5 daily installation limit. You review every new game before
-					publishing.
+					“Create game” uses the shared daily generation allowance. You review every new game before
+					publishing it for children.
 				</p>
-				{#each data.favorites.filter((f) => Number(f.child_id) === Number(child.id)) as food}<div
+				{#each data.favorites.filter((f) => Number(f.child_id) === Number(child.id)) as food (food.id)}<div
 						class="mt-4 flex flex-wrap items-center gap-3 border-t pt-4"
 					>
 						<strong class="mr-auto">{food.display_name}</strong><button
-							disabled={busy}
+							disabled={busy || !data.gameAvailability.generation}
 							onclick={() =>
 								act({
 									action: 'generate',
@@ -160,27 +174,34 @@
 									key: crypto.randomUUID()
 								})}
 							class="rounded-xl bg-teal-800 px-4 py-2 font-bold text-white">Create game</button
-						><button disabled={busy} onclick={() => act({ action: 'remove_favorite', id: food.id })}
-							>Remove</button
+						><button
+							disabled={busy}
+							onclick={() => {
+								if (confirm(`Remove ${food.display_name} from favorite foods?`))
+									void act({ action: 'remove_favorite', id: food.id });
+							}}>Remove</button
 						>
 					</div>{/each}
 			</section>
 			<section class="rounded-3xl bg-white p-6 shadow-sm">
 				<h2 class="text-2xl font-bold">Device access</h2>
 				<p class="my-4">
-					Unlock Word Kitchen for {child.name} on this device for seven days. Parent settings still require
-					your password.
+					Unlock stories, math, spelling, and games for {child.name} on this device for seven days. Parent
+					settings still require your password.
 				</p>
 				<button
 					disabled={busy}
 					class="rounded-xl bg-teal-800 px-5 py-3 font-bold text-white"
 					onclick={() => act({ action: 'unlock', childIds: [Number(child.id)] })}
 					>Unlock this device</button
-				>{#each data.devices.filter((d) => d.child_ids.includes(Number(child.id))) as device}<div
+				>{#each data.devices.filter( (d) => d.child_ids.includes(Number(child.id)) ) as device (device.id)}<div
 						class="mt-4 flex items-center justify-between gap-4"
 					>
 						<span>Expires {new Date(device.expires_at).toLocaleDateString()}</span><button
-							onclick={() => act({ action: 'revoke', deviceId: device.id })}
+							onclick={() => {
+								if (confirm(`Revoke this device’s access to ${child.name}?`))
+									void act({ action: 'revoke', deviceId: device.id });
+							}}
 							disabled={busy}>Revoke access</button
 						>
 					</div>{/each}
@@ -192,18 +213,23 @@
 					Points celebrate participation. Recipe familiarity uses the latest three completed
 					sessions, scored separately for spelling and meaning.
 				</p>
-				{#each child.words as word}<div class="flex justify-between border-t py-2">
+				{#each child.words as word (`${word.word}:${word.skill}`)}<div
+						class="flex justify-between border-t py-2"
+					>
 						<span>{word.word} · {word.skill} · {word.source}</span><span
 							>{word.correct}/{word.independent} independent · {word.assisted} assisted</span
 						>
 					</div>{:else}<p>
 						Learning results will appear after a cooking session.
-					</p>{/each}{#each child.progress as recipe}<div class="mt-4 rounded-xl bg-teal-50 p-3">
-						<strong>{recipe.title} familiarity</strong>{#each recipe.skills as skill}<p>
+					</p>{/each}{#each child.progress as recipe (recipe.id)}<div
+						class="mt-4 rounded-xl bg-teal-50 p-3"
+					>
+						<strong>{recipe.title} familiarity</strong
+						>{#each recipe.skills as skill (skill.skill)}<p>
 								{skill.skill}: level {skill.level} · {skill.firstTryIndependent}/{skill.occurrences}
 								first-try independent
 							</p>{/each}
-					</div>{/each}{#each child.sessions.slice(0, 10) as session}<details
+					</div>{/each}{#each child.sessions.slice(0, 10) as session (session.id)}<details
 						class="mt-4 border-t pt-3"
 					>
 						<summary
@@ -212,7 +238,7 @@
 							)} active minutes</summary
 						>
 						<p class="text-xs">Revision {session.revisionId}</p>
-						{#each session.evidence as attempt}<p class="mt-1 text-sm">
+						{#each session.evidence as attempt (attempt.id)}<p class="mt-1 text-sm">
 								{attempt.word} · {attempt.skill} · {attempt.mechanic.replaceAll('_', ' ')} · {attempt.assistance}
 								· {attempt.correct ? 'correct' : 'practicing'}
 							</p>{/each}

@@ -14,7 +14,8 @@
 			const response = await fetch('/api/settings/games', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ action: 'reset_generation_limit', key: requestKey })
+				body: JSON.stringify({ action: 'reset_generation_limit', key: requestKey }),
+				signal: AbortSignal.timeout(15_000)
 			});
 			if (!response.ok) throw new Error('Could not reset the allowance. Please retry.');
 			await invalidateAll();
@@ -33,7 +34,7 @@
 	<p class="mt-2">{quota.remaining} of {quota.limit} game starts remaining across all children.</p>
 	<p class="mt-2 text-sm text-slate-600">
 		Failed and cancelled jobs count. The allowance renews at midnight UTC. Resetting allows more
-		paid generation today. Job history and the $5 daily spending cap stay in place.
+		game starts today, but separate service safety limits still apply. Job history stays in place.
 	</p>
 	<button
 		class="mt-4 rounded-xl border border-teal-800 px-4 py-2 font-bold text-teal-800 disabled:opacity-50"

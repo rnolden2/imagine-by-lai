@@ -1,14 +1,16 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import type { ActionData, PageData } from './$types';
 	import { enhance } from '$app/forms';
-	import { notifyMathSettingsSaved } from '$lib/math-settings-sync';
-	import type { SubmitFunction } from '@sveltejs/kit';
+	import { notifyMathSettingsSaved } from '#lib/math-settings-sync';
+	import type { SubmitFunction } from '$app/forms';
+	import { onMount } from 'svelte';
 	import {
 		MATH_OPERATIONS as mathOperations,
 		NUMBER_RANGES,
 		MINUTE_STEPS,
 		resolveMathSettings
-	} from '$lib/math';
+	} from '#lib/math';
 
 	export let data: PageData;
 	export let form: ActionData;
@@ -17,8 +19,25 @@
 
 	const grades = ['TK', 'K', '1', '2', '3', '4', '5', '6', '7', '8'];
 	const storyThemes = ['space', 'animals', 'travel', 'food', 'fairy-tales', 'superheroes'];
-	let activeTab: Tab = form && 'mathAction' in form ? 'math' : 'kids';
+	let activeTab: Tab = form && 'mathAction' in form ? 'math' : (data.adminFocus as Tab);
 	let pendingMath: number | null = null;
+	const confirmSubmission =
+		(message: string): SubmitFunction =>
+		({ cancel }) => {
+			if (!confirm(message)) cancel();
+		};
+	const enhanceChild =
+		(name: string): SubmitFunction =>
+		({ action, cancel }) => {
+			if (
+				action.search.includes('deleteUser') &&
+				!confirm(
+					`Delete ${name} and all of their stories, settings, and learning history? This cannot be undone.`
+				)
+			) {
+				cancel();
+			}
+		};
 	const enhanceMath: SubmitFunction = ({ formData, action, cancel }) => {
 		if (pendingMath !== null) {
 			cancel();
@@ -51,6 +70,36 @@
 	let createStoryImageUrl: string | null = null;
 	let createStoryImageObjectName = '';
 	let regeneratingStoryId: number | null = null;
+	let creatingStory = false;
+	let pendingStoryKey = '';
+	const pendingStoryStorageKey = 'imagine.pending-admin-story-job';
+
+	onMount(() => {
+		const pending = localStorage.getItem(pendingStoryStorageKey) ?? '';
+		if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pending))
+			pendingStoryKey = pending;
+	});
+
+	function enhanceStoryJob(requestKey: string, storyId: number | null = null): SubmitFunction {
+		return ({ formData }) => {
+			formData.set('requestKey', requestKey);
+			pendingStoryKey = requestKey;
+			localStorage.setItem(pendingStoryStorageKey, requestKey);
+			regeneratingStoryId = storyId;
+			creatingStory = storyId === null;
+			return async ({ update }) => {
+				await update();
+				regeneratingStoryId = null;
+				creatingStory = false;
+			};
+		};
+	}
+
+	const recoverStoryJob: SubmitFunction =
+		() =>
+		async ({ update }) => {
+			await update({ reset: false });
+		};
 
 	function currentSettings(settings: PageData['mathSettings'], userId: number, grade: string) {
 		return resolveMathSettings(
@@ -63,17 +112,19 @@
 		return total === 0 ? 0 : Math.round((correct / total) * 100);
 	}
 
-	$: storyCount = data.stories.length;
-	$: mathAttemptCount = data.mathStats.reduce((sum, row) => sum + Number(row.total), 0);
-	$: spellingAttemptCount = data.spellingStats.reduce((sum, row) => sum + Number(row.total), 0);
+	$: storyCount = data.catalogCounts.storyCount;
+	$: mathAttemptCount = data.mathAttemptCount;
+	$: spellingAttemptCount = data.spellingAttemptCount;
 </script>
+
+<svelte:head><title>Parent Settings · Imaginations By Lai</title></svelte:head>
 
 <div class="min-h-screen bg-slate-50 px-4 py-8">
 	<div class="mx-auto max-w-7xl">
 		<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
 			<div>
 				<h1 class="text-3xl font-black text-slate-900">Admin Dashboard</h1>
-				<a href="/settings/games" class="mt-3 inline-block font-bold text-teal-800"
+				<a href={resolve('/settings/games')} class="mt-3 inline-block font-bold text-teal-800"
 					>Game settings & parent kitchen →</a
 				>
 				<p class="text-sm font-semibold text-slate-500">
@@ -106,9 +157,21 @@
 				{form.message}
 			</div>
 		{/if}
+		{#if pendingStoryKey}
+			<form
+				method="POST"
+				action="?/recoverStoryJob"
+				use:enhance={recoverStoryJob}
+				class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm"
+			>
+				<input type="hidden" name="requestKey" value={pendingStoryKey} />
+				<span>A generation request may already have been accepted. </span>
+				<button type="submit" class="font-black text-teal-800 underline">Check its status</button>
+			</form>
+		{/if}
 
 		<div class="mb-6 flex flex-wrap gap-2 rounded-xl bg-white p-2 shadow">
-			{#each [['kids', 'Kids Profiles'], ['math', 'Math Operations'], ['spelling', 'Spelling Lists'], ['status', 'System Status']] as tab}
+			{#each [['kids', 'Kids Profiles'], ['math', 'Math Operations'], ['spelling', 'Spelling Lists'], ['status', 'System Status']] as tab (tab[0])}
 				<button
 					type="button"
 					on:click={() => (activeTab = tab[0] as Tab)}
@@ -128,16 +191,27 @@
 					<form method="POST" action="?/addUser" use:enhance class="space-y-4">
 						<input
 							name="name"
+							aria-label="Child name"
 							class="w-full rounded-lg border-slate-300"
 							placeholder="Child name"
 							required
 						/>
 						<div class="grid grid-cols-2 gap-3">
-							<select name="grade" class="rounded-lg border-slate-300" required>
+							<select
+								name="grade"
+								aria-label="Child grade"
+								class="rounded-lg border-slate-300"
+								required
+							>
 								<option disabled selected>Grade</option>
-								{#each grades as grade}<option value={grade}>{grade}</option>{/each}
+								{#each grades as grade (grade)}<option value={grade}>{grade}</option>{/each}
 							</select>
-							<select name="gender" class="rounded-lg border-slate-300" required>
+							<select
+								name="gender"
+								aria-label="Child gender"
+								class="rounded-lg border-slate-300"
+								required
+							>
 								<option disabled selected>Gender</option>
 								<option value="boy">Boy</option>
 								<option value="girl">Girl</option>
@@ -145,6 +219,7 @@
 						</div>
 						<textarea
 							name="characterDescription"
+							aria-label="Child character description"
 							rows="3"
 							class="w-full rounded-lg border-slate-300"
 							placeholder="Character look, like curly brown hair, red glasses, blue cap"
@@ -152,7 +227,7 @@
 						<div>
 							<p class="mb-2 text-sm font-black text-slate-600">Story Themes</p>
 							<div class="flex flex-wrap gap-2">
-								{#each storyThemes as storyTheme}
+								{#each storyThemes as storyTheme (storyTheme)}
 									<label class="rounded-full border border-slate-200 px-3 py-2 text-sm font-bold">
 										<input
 											type="checkbox"
@@ -184,35 +259,51 @@
 				</div>
 
 				<div class="space-y-4">
-					{#each data.users as user}
-						<form method="POST" action="?/saveChildSettings" use:enhance class="p-5">
+					{#each data.users as user (user.id)}
+						<form
+							method="POST"
+							action="?/saveChildSettings"
+							use:enhance={enhanceChild(user.name)}
+							class="p-5"
+						>
 							<input type="hidden" name="id" value={user.id} />
 							<div class="grid gap-4 lg:grid-cols-[1fr_160px_160px]">
 								<input
 									name="name"
+									aria-label={`${user.name} name`}
 									value={user.name}
 									class="rounded-lg border-slate-300 text-lg font-black"
 									required
 								/>
-								<select name="grade" class="rounded-lg border-slate-300">
-									{#each grades as grade}<option value={grade} selected={user.grade === grade}
-											>{grade}</option
+								<select
+									name="grade"
+									aria-label={`${user.name} grade`}
+									class="rounded-lg border-slate-300"
+								>
+									{#each grades as grade (grade)}<option
+											value={grade}
+											selected={user.grade === grade}>{grade}</option
 										>{/each}
 								</select>
-								<select name="gender" class="rounded-lg border-slate-300">
+								<select
+									name="gender"
+									aria-label={`${user.name} gender`}
+									class="rounded-lg border-slate-300"
+								>
 									<option value="boy" selected={user.gender === 'boy'}>Boy</option>
 									<option value="girl" selected={user.gender === 'girl'}>Girl</option>
 								</select>
 							</div>
 							<textarea
 								name="characterDescription"
+								aria-label={`${user.name} character description`}
 								rows="2"
 								class="mt-4 w-full rounded-lg border-slate-300"
 								placeholder="Suggest how the character should look"
 								>{user.character_description ?? ''}</textarea
 							>
 							<div class="mt-4 flex flex-wrap gap-2">
-								{#each storyThemes as storyTheme}
+								{#each storyThemes as storyTheme (storyTheme)}
 									<label class="rounded-full border border-slate-200 px-3 py-2 text-sm font-bold">
 										<input
 											type="checkbox"
@@ -226,8 +317,12 @@
 								{/each}
 							</div>
 							<div class="mt-4 flex flex-wrap items-center gap-3">
-								<select name="storyLengthMinutes" class="rounded-lg border-slate-300">
-									{#each [3, 5, 8, 10] as minutes}
+								<select
+									name="storyLengthMinutes"
+									aria-label={`${user.name} story length`}
+									class="rounded-lg border-slate-300"
+								>
+									{#each [3, 5, 8, 10] as minutes (minutes)}
 										<option value={minutes} selected={(user.story_length_minutes ?? 5) === minutes}
 											>{minutes} minutes</option
 										>
@@ -240,7 +335,7 @@
 								<button
 									type="submit"
 									formaction="?/deleteUser"
-									class="rounded-lg px-3 py-2 font-bold text-rose-600"
+									class="rounded-lg px-3 py-2 font-bold text-rose-700"
 								>
 									Delete
 								</button>
@@ -255,6 +350,7 @@
 						<form method="POST" action="?/addLesson" use:enhance class="mb-4 flex gap-2">
 							<input
 								name="lesson"
+								aria-label="New positive life lesson"
 								class="min-w-0 flex-1 rounded-lg border-slate-300"
 								placeholder="New positive life lesson"
 								required
@@ -262,18 +358,38 @@
 							<button class="bg-primary rounded-lg px-4 py-2 font-black text-slate-900">Add</button>
 						</form>
 						<div class="flex flex-wrap gap-2">
-							{#each data.lessons as lesson}
+							{#each data.lessons as lesson (lesson.id)}
 								<div
 									class="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-2 text-sm font-bold"
 								>
 									<span>{lesson.lesson}</span>
-									<form method="POST" action="?/deleteLesson" use:enhance>
+									<form
+										method="POST"
+										action="?/deleteLesson"
+										use:enhance={confirmSubmission(
+											'Delete this life lesson? This cannot be undone.'
+										)}
+									>
 										<input type="hidden" name="id" value={lesson.id} />
 										<button class="text-rose-500" aria-label="Delete lesson">x</button>
 									</form>
 								</div>
 							{/each}
 						</div>
+						<nav aria-label="Life lesson pages" class="mt-4 flex gap-4 text-sm font-bold">
+							{#if data.adminPages.lesson > 1}
+								<a
+									href={resolve(`/settings?adminTab=kids&lessonPage=${data.adminPages.lesson - 1}`)}
+									class="text-teal-800 underline">Previous lessons</a
+								>
+							{/if}
+							{#if data.adminPages.lessonHasMore}
+								<a
+									href={resolve(`/settings?adminTab=kids&lessonPage=${data.adminPages.lesson + 1}`)}
+									class="text-teal-800 underline">Next lessons</a
+								>
+							{/if}
+						</nav>
 					</div>
 				</div>
 			</section>
@@ -289,7 +405,7 @@
 								<fieldset disabled={pendingMath !== null}>
 									<legend class="sr-only">Math settings for {user.name}</legend>
 									<div class="mb-4 flex flex-wrap gap-2">
-										{#each mathOperations as op}
+										{#each mathOperations as op (op)}
 											<label
 												class="rounded-full border border-slate-200 px-3 py-2 text-sm font-bold"
 											>
@@ -310,7 +426,7 @@
 										name="maxNumber"
 										class="mb-4 w-full rounded-lg border-slate-300"
 									>
-										{#each NUMBER_RANGES as range}
+										{#each NUMBER_RANGES as range (range)}
 											<option value={range} selected={settings.maxNumber === range}
 												>1 to {range}</option
 											>
@@ -323,7 +439,7 @@
 										name="minuteStep"
 										class="mb-4 w-full rounded-lg border-slate-300"
 									>
-										{#each MINUTE_STEPS as step}<option
+										{#each MINUTE_STEPS as step (step)}<option
 												value={step}
 												selected={settings.minuteStep === step}
 												>{step === 60 ? 'Whole hours' : `${step} minutes`}</option
@@ -347,7 +463,7 @@
 								class="px-5 pb-3"
 							>
 								<input type="hidden" name="userId" value={user.id} />
-								<button disabled={pendingMath !== null} class="text-sm font-bold text-rose-600"
+								<button disabled={pendingMath !== null} class="text-sm font-bold text-rose-700"
 									>Clear stats for {user.name}</button
 								>
 							</form>
@@ -357,7 +473,8 @@
 				<div class="rounded-xl bg-white p-5 shadow">
 					<h2 class="mb-4 text-xl font-black text-slate-800">Math History</h2>
 					<p class="mb-3 text-sm text-slate-500">
-						Recent history, based on the latest 1,000 answers. Older sessions may be incomplete.
+						Complete results for the 100 most recent sessions. The dashboard totals include all
+						saved answers.
 					</p>
 					<div class="overflow-x-auto">
 						<table class="w-full text-sm">
@@ -369,7 +486,7 @@
 								></thead
 							>
 							<tbody>
-								{#each data.mathStats as row}
+								{#each data.mathStats as row (`${row.child_id}:${row.session_id}`)}
 									<tr class="border-t">
 										<td class="py-2">{new Date(row.started_at).toLocaleString()}</td>
 										<td>{row.child_name ?? row.user_name ?? 'Unknown'}</td>
@@ -393,46 +510,88 @@
 						use:enhance
 						class="mb-5 flex flex-wrap gap-3"
 					>
-						<input name="word" class="rounded-lg border-slate-300" placeholder="Word" required />
-						<select name="grade" class="rounded-lg border-slate-300" required>
+						<input
+							name="word"
+							aria-label="Custom spelling word"
+							class="rounded-lg border-slate-300"
+							placeholder="Word"
+							required
+						/>
+						<select
+							name="grade"
+							aria-label="Custom spelling word grade"
+							class="rounded-lg border-slate-300"
+							required
+						>
 							<option disabled selected>Grade</option>
-							{#each grades.slice(0, 6) as grade}<option value={grade}>{grade}</option>{/each}
+							{#each grades.slice(0, 6) as grade (grade)}<option value={grade}>{grade}</option
+								>{/each}
 						</select>
 						<button class="bg-primary rounded-lg px-4 py-2 font-black text-slate-900"
 							>Add Word</button
 						>
 					</form>
 					<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-						{#each grades.slice(0, 6) as grade}
+						{#each grades.slice(0, 6) as grade (grade)}
 							{@const words = data.spellingWords.filter((word) => word.grade === grade)}
 							<div class="rounded-lg border border-slate-200 p-4">
 								<h3 class="mb-3 font-black text-slate-700">Grade {grade}</h3>
 								<div class="flex flex-wrap gap-2">
-									{#each words as word}
+									{#each words as word (word.id)}
 										<div
 											class="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm font-bold"
 										>
 											<span>{word.word}</span>
-											<form method="POST" action="?/deleteSpellingWord" use:enhance>
+											<form
+												method="POST"
+												action="?/deleteSpellingWord"
+												use:enhance={confirmSubmission(
+													`Delete the custom spelling word “${word.word}”?`
+												)}
+											>
 												<input type="hidden" name="id" value={word.id} />
-												<button class="text-rose-500">x</button>
+												<button class="text-rose-500" aria-label={`Delete ${word.word}`}>x</button>
 											</form>
 										</div>
 									{:else}
-										<p class="text-sm text-slate-400">Using built-in list.</p>
+										<p class="text-sm text-slate-600">Using built-in list.</p>
 									{/each}
 								</div>
 							</div>
 						{/each}
 					</div>
+					<nav aria-label="Custom spelling word pages" class="mt-4 flex gap-4 text-sm font-bold">
+						{#if data.adminPages.word > 1}
+							<a
+								href={resolve(`/settings?adminTab=spelling&wordPage=${data.adminPages.word - 1}`)}
+								class="text-teal-800 underline">Previous words</a
+							>
+						{/if}
+						{#if data.adminPages.wordHasMore}
+							<a
+								href={resolve(`/settings?adminTab=spelling&wordPage=${data.adminPages.word + 1}`)}
+								class="text-teal-800 underline">Next words</a
+							>
+						{/if}
+					</nav>
 				</div>
 				<div class="rounded-xl bg-white p-5 shadow">
 					<div class="mb-4 flex items-center justify-between">
 						<h2 class="text-xl font-black text-slate-800">Spelling History</h2>
-						<form method="POST" action="?/clearSpellingStats" use:enhance>
-							<button class="text-sm font-bold text-rose-600">Clear all</button>
+						<form
+							method="POST"
+							action="?/clearSpellingStats"
+							use:enhance={confirmSubmission(
+								'Clear all spelling history for every child? This cannot be undone.'
+							)}
+						>
+							<button class="text-sm font-bold text-rose-700">Clear all</button>
 						</form>
 					</div>
+					<p class="mb-3 text-sm text-slate-500">
+						Complete results for the 100 most recent sessions. The dashboard totals include all
+						saved answers.
+					</p>
 					<div class="overflow-x-auto">
 						<table class="w-full text-sm">
 							<thead
@@ -443,7 +602,7 @@
 								></thead
 							>
 							<tbody>
-								{#each data.spellingStats as row}
+								{#each data.spellingStats as row (`${row.child_id}:${row.session_id}:${row.grade}`)}
 									<tr class="border-t">
 										<td class="py-2">{new Date(row.started_at).toLocaleString()}</td>
 										<td>{row.child_name ?? row.user_name ?? 'Unknown'}</td>
@@ -464,7 +623,7 @@
 					<div class="rounded-xl bg-white p-5 shadow">
 						<p class="text-sm font-bold text-slate-500">Connection</p>
 						<p class="text-xl font-black">Supabase</p>
-						<p class="text-xs text-slate-400">Postgres transaction pooler</p>
+						<p class="text-xs text-slate-600">Postgres transaction pooler</p>
 					</div>
 					<div class="rounded-xl bg-white p-5 shadow">
 						<p class="text-sm font-bold text-slate-500">Children</p>
@@ -472,7 +631,7 @@
 					</div>
 					<div class="rounded-xl bg-white p-5 shadow">
 						<p class="text-sm font-bold text-slate-500">Custom Words</p>
-						<p class="text-xl font-black">{data.spellingWords.length}</p>
+						<p class="text-xl font-black">{data.catalogCounts.spellingWordCount}</p>
 					</div>
 					<div class="rounded-xl bg-white p-5 shadow">
 						<p class="text-sm font-bold text-slate-500">Image Queue</p>
@@ -486,11 +645,18 @@
 						{data.gcsError}
 					</div>
 				{/if}
+				{#if data.hasMoreAvailableImages}
+					<div
+						class="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm font-semibold text-sky-900"
+					>
+						Showing one bounded storage page. Use the image-library navigation to continue.
+					</div>
+				{/if}
 				<div class="rounded-xl bg-white p-5 shadow">
 					<h2 class="mb-4 text-xl font-black text-slate-800">Story Image Assignment</h2>
 					<div class="grid gap-6 lg:grid-cols-2">
 						<div class="space-y-2">
-							{#each data.storiesWithoutImages as story}
+							{#each data.storiesWithoutImages as story (story.id)}
 								<button
 									type="button"
 									on:click={() => (selectedStoryId = String(story.id))}
@@ -503,11 +669,29 @@
 									<p class="truncate text-sm text-slate-500">{story.prompt}</p>
 								</button>
 							{:else}
-								<p class="text-sm text-slate-400">All stories have images.</p>
+								<p class="text-sm text-slate-600">All stories have images.</p>
 							{/each}
+							<nav aria-label="Stories needing images" class="flex gap-4 pt-2 text-sm font-bold">
+								{#if data.adminPages.missingStory > 1}
+									<a
+										href={resolve(
+											`/settings?adminTab=status&missingStoryPage=${data.adminPages.missingStory - 1}`
+										)}
+										class="text-teal-800 underline">Previous stories</a
+									>
+								{/if}
+								{#if data.adminPages.missingStoryHasMore}
+									<a
+										href={resolve(
+											`/settings?adminTab=status&missingStoryPage=${data.adminPages.missingStory + 1}`
+										)}
+										class="text-teal-800 underline">Next stories</a
+									>
+								{/if}
+							</nav>
 						</div>
 						<div class="grid max-h-96 grid-cols-2 gap-2 overflow-y-auto">
-							{#each data.availableImages as image}
+							{#each data.availableImages as image (image.objectName)}
 								<button
 									type="button"
 									on:click={() => {
@@ -529,6 +713,21 @@
 							{/each}
 						</div>
 					</div>
+					<nav aria-label="Unassigned image pages" class="mt-4 flex gap-4 text-sm font-bold">
+						{#if data.imagePageToken}
+							<a href={resolve('/settings?adminTab=status')} class="text-teal-800 underline"
+								>First image page</a
+							>
+						{/if}
+						{#if data.nextImagePageToken}
+							<a
+								href={resolve(
+									`/settings?adminTab=status&imagePageToken=${encodeURIComponent(data.nextImagePageToken)}`
+								)}
+								class="text-teal-800 underline">Next image page</a
+							>
+						{/if}
+					</nav>
 					<form
 						method="POST"
 						action="?/assignImageToStory"
@@ -559,7 +758,7 @@
 				<div class="rounded-xl bg-white p-5 shadow">
 					<h2 class="mb-4 text-xl font-black text-slate-800">Regenerate Story Images</h2>
 					<div class="grid gap-3 md:grid-cols-2">
-						{#each data.stories as story}
+						{#each data.stories as story (story.id)}
 							<div class="flex gap-3 rounded-lg border border-slate-200 p-3">
 								<img
 									src={story.image_url}
@@ -573,16 +772,18 @@
 									<form
 										method="POST"
 										action="?/regenerateStoryImage"
-										use:enhance={() => {
-											regeneratingStoryId = story.id;
-											return async ({ update }) => {
-												await update();
-												regeneratingStoryId = null;
-											};
-										}}
+										use:enhance={enhanceStoryJob(
+											data.storyJobRequestKeys.regenerate[String(story.id)],
+											story.id
+										)}
 										class="mt-3"
 									>
 										<input type="hidden" name="storyId" value={story.id} />
+										<input
+											type="hidden"
+											name="requestKey"
+											value={data.storyJobRequestKeys.regenerate[String(story.id)]}
+										/>
 										<button
 											class="bg-primary rounded-lg px-3 py-2 text-sm font-black text-slate-900 disabled:opacity-50"
 											disabled={regeneratingStoryId !== null}
@@ -590,20 +791,18 @@
 											{regeneratingStoryId === story.id ? 'Regenerating...' : 'Regenerate image'}
 										</button>
 									</form>
-									<form method="POST" action="?/deleteStory" use:enhance class="mt-2">
+									<form
+										method="POST"
+										action="?/deleteStory"
+										use:enhance={confirmSubmission(
+											`Delete story #${story.id}? The story cannot be recovered, and its unused illustration will be scheduled for removal.`
+										)}
+										class="mt-2"
+									>
 										<input type="hidden" name="id" value={story.id} />
 										<button
 											type="submit"
-											on:click={(event) => {
-												if (
-													!confirm(
-														`Delete story #${story.id}? This will remove the story and its image permanently.`
-													)
-												) {
-													event.preventDefault();
-												}
-											}}
-											class="rounded-lg border border-rose-200 px-3 py-2 text-sm font-black text-rose-600 hover:bg-rose-50"
+											class="rounded-lg border border-rose-200 px-3 py-2 text-sm font-black text-rose-700 hover:bg-rose-50"
 										>
 											Delete story and image
 										</button>
@@ -611,9 +810,27 @@
 								</div>
 							</div>
 						{:else}
-							<p class="text-sm text-slate-400">No stories yet.</p>
+							<p class="text-sm text-slate-600">No stories yet.</p>
 						{/each}
 					</div>
+					<nav aria-label="Stories with images" class="mt-4 flex gap-4 text-sm font-bold">
+						{#if data.adminPages.story > 1}
+							<a
+								href={resolve(
+									`/settings?adminTab=status&storyAdminPage=${data.adminPages.story - 1}`
+								)}
+								class="text-teal-800 underline">Previous stories</a
+							>
+						{/if}
+						{#if data.adminPages.storyHasMore}
+							<a
+								href={resolve(
+									`/settings?adminTab=status&storyAdminPage=${data.adminPages.story + 1}`
+								)}
+								class="text-teal-800 underline">Next stories</a
+							>
+						{/if}
+					</nav>
 				</div>
 			</section>
 		{/if}
@@ -659,9 +876,15 @@
 				alt="Selected"
 				class="mb-4 h-48 w-full rounded-lg object-cover"
 			/>
-			<form method="POST" action="?/createStoryFromImage" use:enhance class="space-y-3">
+			<form
+				method="POST"
+				action="?/createStoryFromImage"
+				use:enhance={enhanceStoryJob(data.storyJobRequestKeys.fromImage)}
+				class="space-y-3"
+			>
 				<input type="hidden" name="imageUrl" value={createStoryImageUrl} />
 				<input type="hidden" name="imageObjectName" value={createStoryImageObjectName} />
+				<input type="hidden" name="requestKey" value={data.storyJobRequestKeys.fromImage} />
 				<textarea
 					name="prompt"
 					rows="3"
@@ -675,7 +898,10 @@
 						on:click={() => (showCreateStoryModal = false)}
 						class="rounded-lg px-4 py-2 font-bold">Cancel</button
 					>
-					<button class="bg-primary rounded-lg px-4 py-2 font-black text-slate-900">Generate</button
+					<button
+						disabled={creatingStory}
+						class="bg-primary rounded-lg px-4 py-2 font-black text-slate-900 disabled:opacity-50"
+						>{creatingStory ? 'Accepting…' : 'Generate'}</button
 					>
 				</div>
 			</form>

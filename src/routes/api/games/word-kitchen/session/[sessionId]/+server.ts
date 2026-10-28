@@ -1,8 +1,8 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
-import { requireOrigin, readBody } from '$lib/server/games/common';
-import { eventSchema } from '$lib/games/word-kitchen/contracts';
-import { sessionRow, envelope, submitEvent } from '$lib/server/games/sessions';
+import { requireOrigin, readBody } from '#lib/server/games/common';
+import { eventSchema } from '#lib/games/word-kitchen/contracts';
+import { sessionRow, envelope, submitEvent } from '#lib/server/games/sessions';
 import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (e) => {
 	const id = z.string().uuid().parse(e.params.sessionId);

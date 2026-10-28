@@ -15,6 +15,8 @@
 					type="password"
 					id="password"
 					name="password"
+					autocomplete="current-password"
+					maxlength="1024"
 					class="focus:border-primary focus:ring-primary mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm"
 					required
 				/>

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { curatedRecipes } from '$lib/server/games/curated';
-import { bindSession } from '$lib/server/games/learning-context';
+import { curatedRecipes } from '#lib/server/games/curated';
+import { bindSession } from '#lib/server/games/learning-context';
 import {
 	validateRecipe,
 	settingsSchema,

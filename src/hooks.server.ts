@@ -1,42 +1,65 @@
-import { verifyAdminSession } from '$lib/server/admin-session';
-import { ADMIN_PASSWORD } from '$lib/server/secrets';
-import { base } from '$app/paths';
-import type { Handle, HandleServerError } from '@sveltejs/kit';
-import { SupabaseConnectionError } from '$lib/server/db';
-import { redirect } from '@sveltejs/kit';
+import { verifyAdminSession } from '#lib/server/admin-session';
+import { ADMIN_PASSWORD } from '#lib/server/secrets';
+import { randomUUID } from 'node:crypto';
+import { authorizeRequest } from '#lib/server/application-security';
+import type { Handle, HandleServerError } from '@sveltejs/kit/hooks';
+import { SupabaseConnectionError } from '#lib/server/db';
 
 export const handle: Handle = async ({ event, resolve }) => {
+	event.locals.requestId = randomUUID();
+	event.setHeaders({
+		'X-Request-ID': event.locals.requestId,
+		'X-Content-Type-Options': 'nosniff',
+		// Preserve Origin on same-origin native POST forms while hiding external referrers.
+		'Referrer-Policy': 'same-origin',
+		'X-Frame-Options': 'DENY',
+		'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+		'Cross-Origin-Opener-Policy': 'same-origin',
+		'Cross-Origin-Resource-Policy': 'same-origin',
+		'Permissions-Policy':
+			'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()',
+		'Cache-Control': 'private, no-store'
+	});
 	const session = event.cookies.get('session');
-	if (verifyAdminSession(session, ADMIN_PASSWORD)) {
+	if (ADMIN_PASSWORD.length >= 12 && verifyAdminSession(session, ADMIN_PASSWORD)) {
 		event.locals.user = { isAdmin: true };
 	}
 
-	// Secure the /settings routes to prevent kids from accessing admin controls
-	if (
-		(event.url.pathname === `${base}/settings` ||
-			event.url.pathname.startsWith(`${base}/settings/`)) &&
-		!event.locals.user?.isAdmin
-	) {
-		throw redirect(303, `${base}/login`);
-	}
+	await authorizeRequest(event);
 
 	return resolve(event);
 };
 
-export const handleError: HandleServerError = ({ error }) => {
+export const handleError: HandleServerError = ({ error, event, kind }) => {
+	// Kit 3 also invokes this hook for intentional HTTP errors. Preserve their
+	// safe public messages and avoid reporting rejected requests as server faults.
+	if (kind !== 'unknown') {
+		if (error.status >= 500) {
+			console.error('request.failed', {
+				requestId: event.locals.requestId,
+				route: event.route.id,
+				status: error.status,
+				kind,
+				code: 'HTTP_ERROR'
+			});
+		}
+		return;
+	}
+	console.error('request.failed', {
+		requestId: event.locals.requestId,
+		route: event.route.id,
+		status: error instanceof SupabaseConnectionError ? 503 : 500,
+		kind,
+		code: error instanceof SupabaseConnectionError ? 'DATABASE_UNAVAILABLE' : 'SERVER_ERROR'
+	});
 	if (error instanceof SupabaseConnectionError) {
-		console.error('[supabase]', error.message, error.cause ?? '');
 		return {
+			status: 503,
 			code: 'SUPABASE_CONNECTION',
 			title: 'Database connection problem',
 			message: error.publicMessage,
 			retryable: true,
-			help: [
-				'Check that the deployed secrets include supabase_url and SUPABASE_SERVICE_ROLE_KEY.',
-				'Confirm the Supabase URL starts with https:// and ends with .supabase.co.',
-				'Use a server-only service role key. Do not use a browser publishable key for server writes.',
-				'If the database was just created, run the schema SQL manually in the Supabase SQL Editor.'
-			]
+			help: ['Please try again shortly. A parent can contact the administrator if this continues.']
 		};
 	}
 

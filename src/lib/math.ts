@@ -38,38 +38,35 @@ export function isOperation(value: unknown): value is Operation {
 	return typeof value === 'string' && MATH_OPERATIONS.includes(value as Operation);
 }
 export function normalizeOps(value: unknown): Operation[] {
-  	let raw: unknown[];
+	let raw: unknown[];
 
-  	if (Array.isArray(value)) {
-  		raw = value;
-  	} else if (typeof value === 'string') {
-  		const trimmed = value.trim();
+	if (Array.isArray(value)) {
+		raw = value;
+	} else if (typeof value === 'string') {
+		const trimmed = value.trim();
 
-  		if (trimmed.startsWith('[')) {
-  			try {
-  				const parsed = JSON.parse(trimmed);
-  				raw = Array.isArray(parsed) ? parsed : [];
-  			} catch {
-  				raw = [];
-  			}
-  		} else {
-  			raw = trimmed
-  				.replace(/^\{/, '')
-  				.replace(/\}$/, '')
-  				.split(',');
-  		}
-  	} else {
-  		raw = [];
-  	}
+		if (trimmed.startsWith('[')) {
+			try {
+				const parsed = JSON.parse(trimmed);
+				raw = Array.isArray(parsed) ? parsed : [];
+			} catch {
+				raw = [];
+			}
+		} else {
+			raw = trimmed.replace(/^\{/, '').replace(/\}$/, '').split(',');
+		}
+	} else {
+		raw = [];
+	}
 
-  	return [
-  		...new Set(
-  			raw
-  				.filter((op): op is string => typeof op === 'string')
-  				.map((op) => op.trim().replace(/^"|"$/g, ''))
-  		)
-  	].filter(isOperation);
-  }
+	return [
+		...new Set(
+			raw
+				.filter((op): op is string => typeof op === 'string')
+				.map((op) => op.trim().replace(/^"|"$/g, ''))
+		)
+	].filter(isOperation);
+}
 function record(value: unknown): Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value)
 		? (value as Record<string, unknown>)

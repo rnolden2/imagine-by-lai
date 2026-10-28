@@ -1,5 +1,5 @@
-import { getSupabase } from '$lib/server/db';
-import { validateRecipe } from '$lib/games/word-kitchen/contracts';
+import { getSupabase } from '#lib/server/db';
+import { validateRecipe } from '#lib/games/word-kitchen/contracts';
 import { access } from './authorization';
 import { checkResult } from './common';
 import { learningContext } from './learning-context';
@@ -18,16 +18,15 @@ export async function library(event: RequestEvent) {
 	// Published recipes form one shared library. Page through it rather than
 	// silently dropping recipes at the Data API's default row limit.
 	const pageSize = 100;
-	for (let offset = 0; ; offset += pageSize) {
-		const page =
-			checkResult(
-				await db
-					.from('game_recipes')
-					.select('id,origin,published_revision_id')
-					.is('archived_at', null)
-					.order('id')
-					.range(offset, offset + pageSize - 1)
-			) ?? [];
+	let afterRecipeId: string | undefined;
+	for (;;) {
+		let query = db
+			.from('game_recipes')
+			.select('id,origin,published_revision_id')
+			.is('archived_at', null)
+			.order('id');
+		if (afterRecipeId) query = query.gt('id', afterRecipeId);
+		const page = checkResult(await query.limit(pageSize)) ?? [];
 		recipes.push(...page);
 		const ids = page.flatMap((r) => (r.published_revision_id ? [r.published_revision_id] : []));
 		if (ids.length) {
@@ -42,16 +41,38 @@ export async function library(event: RequestEvent) {
 			);
 		}
 		if (page.length < pageSize) break;
+		afterRecipeId = String(page[page.length - 1].id);
 	}
+	const owners = new Map(recipes.map((recipe) => [recipe.id, recipe]));
+	const childContexts: {
+		child: (typeof children)[number];
+		context: Awaited<ReturnType<typeof learningContext>>;
+	}[] = [];
+	// A household normally has few children, but profile count is not database-capped.
+	// Bound the four-query context fan-out instead of opening all requests at once.
+	for (let offset = 0; offset < children.length; offset += 4)
+		childContexts.push(
+			...(await Promise.all(
+				children.slice(offset, offset + 4).map(async (child) => ({
+					child,
+					context: await learningContext(Number(child.id))
+				}))
+			))
+		);
 	const cards = [];
-	for (const child of children) {
-		const context = await learningContext(Number(child.id));
-		for (const row of revisions) {
-			const recipe = validateRecipe(row.definition);
-			const owner = recipes.find((r) => r.id === row.recipe_id)!;
-			if (!compatible(recipe, context.settings.excludedFoodConceptIds)) continue;
-			const manifest = await deliveryManifest(recipe);
-			const hero = Object.values(manifest).find((a) => a.revisionId === recipe.heroAssetId);
+	for (const row of revisions) {
+		const recipe = validateRecipe(row.definition);
+		const owner = owners.get(row.recipe_id);
+		if (!owner) continue;
+		const eligible = childContexts.filter(({ context }) =>
+			compatible(recipe, context.settings.excludedFoodConceptIds)
+		);
+		if (!eligible.length) continue;
+		// Delivery URLs and asset revisions are recipe-scoped, not child-scoped. Resolve
+		// them once so multiple children do not multiply database and signing work.
+		const manifest = await deliveryManifest(recipe);
+		const hero = Object.values(manifest).find((asset) => asset.revisionId === recipe.heroAssetId);
+		for (const { child, context } of eligible) {
 			cards.push({
 				childId: Number(child.id),
 				revisionId: row.id,

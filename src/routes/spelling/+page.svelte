@@ -1,19 +1,22 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { fade, scale, fly } from 'svelte/transition';
-	import { theme } from '$lib/stores';
-	import MilestoneAnimation from '$lib/components/MilestoneAnimation.svelte';
-	import { speak } from '$lib/tts';
+	import { theme } from '#lib/stores';
+	import MilestoneAnimation from '#lib/components/MilestoneAnimation.svelte';
+	import { speak } from '#lib/tts';
+	import { savePracticeAttempt } from '#lib/practice-history';
 
 	export let data: PageData;
 
 	// ── User selection ───────────────────────────────────────────────
 	let selectedUser: (typeof data.users)[0] | null = null;
+	let reducedMotion = false;
 
 	function selectUser(user: (typeof data.users)[0]) {
 		selectedUser = user;
 		$theme = user.gender === 'boy' ? 'theme-boy' : 'theme-girl';
+		sessionId = crypto.randomUUID();
 		initSession(user);
 	}
 
@@ -44,14 +47,25 @@
 	let sessionDone = false;
 
 	onMount(() => {
-		sessionId = crypto.randomUUID();
+		const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+		const updateMotion = () => (reducedMotion = preference.matches);
+		updateMotion();
+		preference.addEventListener('change', updateMotion);
+		return () => {
+			preference.removeEventListener('change', updateMotion);
+			if (advanceTimer) clearTimeout(advanceTimer);
+			clearWordTimers();
+		};
 	});
 
 	function initSession(user: (typeof data.users)[0]) {
+		if (advanceTimer) clearTimeout(advanceTimer);
+		clearWordTimers();
 		wordList = buildWordList(user);
 		currentIndex = 0;
 		correctWords = [];
 		missedWords = [];
+		correctCount = 0;
 		sessionDone = false;
 		loadWord(0);
 	}
@@ -69,9 +83,20 @@
 	let userInput = '';
 	let feedback: 'correct' | 'wrong' | 'failed' | null = null;
 	let advanceTimer: ReturnType<typeof setTimeout> | null = null;
+	let wordTimers: ReturnType<typeof setTimeout>[] = [];
 	let inputEl: HTMLInputElement;
 
+	function clearWordTimers() {
+		for (const timer of wordTimers) clearTimeout(timer);
+		wordTimers = [];
+	}
+
+	function scheduleWordTask(task: () => void, delay: number) {
+		wordTimers.push(setTimeout(task, delay));
+	}
+
 	function loadWord(index: number) {
+		clearWordTimers();
 		if (index >= wordList.length) {
 			sessionDone = true;
 			return;
@@ -81,8 +106,8 @@
 		userInput = '';
 		feedback = null;
 		// Auto-play after a short delay so the page has settled
-		setTimeout(() => speak(currentWord), 300);
-		setTimeout(() => inputEl?.focus(), 350);
+		scheduleWordTask(() => void speak(currentWord), 300);
+		scheduleWordTask(() => inputEl?.focus(), 350);
 	}
 
 	// ── Submit ───────────────────────────────────────────────────────
@@ -116,10 +141,11 @@
 			} else {
 				feedback = 'wrong';
 				// Replay word and clear feedback so they can try again
-				setTimeout(() => speak(currentWord), 400);
-				setTimeout(() => {
+				scheduleWordTask(() => void speak(currentWord), 400);
+				scheduleWordTask(async () => {
 					feedback = null;
 					userInput = '';
+					await tick();
 					inputEl?.focus();
 				}, 1200);
 			}
@@ -140,20 +166,20 @@
 	$: remaining = wordList.length - currentIndex;
 
 	// ── Async log ────────────────────────────────────────────────────
+	let historyError = false;
 	function logAttempt(word: string, attemptsUsed: number, isCorrect: boolean) {
 		if (!selectedUser || !sessionId) return;
-		fetch('/api/spelling', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				userId: selectedUser.id,
-				sessionId,
-				word,
-				grade: selectedUser.grade,
-				attemptsUsed,
-				isCorrect
-			})
-		}).catch(() => {});
+		void savePracticeAttempt('spelling', {
+			userId: selectedUser.id,
+			sessionId,
+			word,
+			grade: selectedUser.grade,
+			attemptsUsed,
+			givenAnswer: userInput.trim(),
+			isCorrect
+		}).catch(() => {
+			historyError = true;
+		});
 	}
 
 	// ── Milestone ────────────────────────────────────────────────────
@@ -164,15 +190,24 @@
 	$: attemptDots = Array.from({ length: MAX_ATTEMPTS }, (_, i) => i < attempts);
 </script>
 
+<svelte:head><title>Spelling Practice · Imaginations By Lai</title></svelte:head>
+
 <div class="flex min-h-screen flex-col items-center bg-gray-100 px-4 pt-10 pb-16">
+	{#if historyError}
+		<p role="status" class="mb-4 text-center text-rose-700">
+			Some answers could not be saved to history. Use Retry saving above when the connection
+			returns.
+		</p>
+	{/if}
 	<!-- User selector -->
 	{#if data.users && data.users.length > 0}
 		<div class="mb-8 text-center">
-			<h2 class="mb-4 text-xl font-semibold">Who is spelling today?</h2>
+			<h1 class="mb-4 text-xl font-semibold">Who is spelling today?</h1>
 			<div class="flex flex-wrap justify-center gap-4">
-				{#each data.users as user}
+				{#each data.users as user (user.id)}
 					<button
 						on:click={() => selectUser(user)}
+						aria-pressed={selectedUser?.id === user.id}
 						class="bg-primary rounded-xl px-6 py-3 text-lg font-bold text-black shadow transition-all hover:opacity-90"
 						class:ring-4={selectedUser?.id === user.id}
 						class:ring-secondary={selectedUser?.id === user.id}
@@ -188,7 +223,7 @@
 		{#if !sessionDone}
 			<!-- Score bar -->
 			<div
-				in:fade={{ duration: 300 }}
+				in:fade={{ duration: reducedMotion ? 0 : 300 }}
 				class="mb-6 flex w-full max-w-lg items-center justify-between rounded-2xl bg-white px-6 py-3 shadow"
 			>
 				<div class="text-center">
@@ -208,14 +243,14 @@
 			<!-- Problem card -->
 			{#key currentWord}
 				<div
-					in:scale={{ duration: 220, start: 0.96 }}
+					in:scale={{ duration: reducedMotion ? 0 : 220, start: 0.96 }}
 					class="flex w-full max-w-lg flex-col items-center gap-6 rounded-3xl bg-white p-8 shadow-lg"
 				>
 					<!-- Hear it button -->
 					<button
 						on:click={() => speak(currentWord)}
 						class="group flex flex-col items-center gap-2"
-						aria-label="Hear the word"
+						aria-label="Hear it again: repeat the spelling word"
 					>
 						<div
 							class="bg-primary/20 group-hover:bg-primary/40 flex h-20 w-20 items-center justify-center rounded-full transition-colors"
@@ -234,13 +269,15 @@
 
 					<!-- Attempt dots -->
 					<div class="flex items-center gap-3">
-						{#each attemptDots as used, i}
+						<span class="sr-only">{attempts} of {MAX_ATTEMPTS} attempts used.</span>
+						{#each attemptDots as used, i (i)}
 							<div
+								aria-hidden="true"
 								class="h-4 w-4 rounded-full transition-colors {used ? 'bg-red-400' : 'bg-gray-200'}"
 								title="Attempt {i + 1}"
 							></div>
 						{/each}
-						<span class="ml-1 text-sm text-gray-400">
+						<span class="ml-1 text-sm text-gray-600">
 							{attempts === 0
 								? 'First try!'
 								: `${MAX_ATTEMPTS - attempts} chance${MAX_ATTEMPTS - attempts === 1 ? '' : 's'} left`}
@@ -248,26 +285,36 @@
 					</div>
 
 					<!-- Feedback -->
-					{#if feedback === 'correct'}
-						<p in:scale={{ duration: 200, start: 0.7 }} class="text-2xl font-bold text-green-500">
-							"{currentWord}" — correct!
-						</p>
-					{:else if feedback === 'wrong'}
-						<p in:scale={{ duration: 200, start: 0.7 }} class="text-2xl font-bold text-orange-400">
-							Not quite — try again!
-						</p>
-					{:else if feedback === 'failed'}
-						<div in:scale={{ duration: 200, start: 0.7 }} class="text-center">
-							<p class="text-xl font-bold text-red-400">The word was:</p>
-							<p class="mt-1 text-4xl font-black text-gray-800">{currentWord}</p>
-						</div>
-					{:else}
-						<p class="text-lg font-medium text-gray-400">Type what you hear</p>
-					{/if}
+					<div role="status" aria-live="polite" aria-atomic="true">
+						{#if feedback === 'correct'}
+							<p
+								in:scale={{ duration: reducedMotion ? 0 : 200, start: 0.7 }}
+								class="text-2xl font-bold text-green-500"
+							>
+								"{currentWord}" — correct!
+							</p>
+						{:else if feedback === 'wrong'}
+							<p
+								in:scale={{ duration: reducedMotion ? 0 : 200, start: 0.7 }}
+								class="text-2xl font-bold text-orange-700"
+							>
+								Not quite — try again!
+							</p>
+						{:else if feedback === 'failed'}
+							<div in:scale={{ duration: reducedMotion ? 0 : 200, start: 0.7 }} class="text-center">
+								<p class="text-xl font-bold text-red-400">The word was:</p>
+								<p class="mt-1 text-4xl font-black text-gray-800">{currentWord}</p>
+							</div>
+						{:else}
+							<p class="text-lg font-medium text-gray-600">Type what you hear</p>
+						{/if}
+					</div>
 
 					<!-- Input -->
-					<div class="flex w-full gap-3">
+					<div class="flex w-full flex-col gap-3 sm:flex-row">
+						<label for="spelling-answer" class="sr-only">Spell the word you hear</label>
 						<input
+							id="spelling-answer"
 							bind:this={inputEl}
 							bind:value={userInput}
 							on:keydown={handleKeydown}
@@ -278,24 +325,24 @@
 							spellcheck="false"
 							placeholder="Spell it here..."
 							disabled={feedback !== null}
-							class="focus:border-primary flex-1 rounded-2xl border-4 border-gray-200 py-4 text-center text-3xl font-bold tracking-widest transition-colors focus:outline-none disabled:opacity-50"
+							class="focus:border-primary w-full min-w-0 flex-1 rounded-2xl border-4 border-gray-200 py-4 text-center text-3xl font-bold tracking-widest transition-colors focus:outline-none disabled:opacity-50"
 						/>
 						<button
 							on:click={submit}
 							disabled={feedback !== null || userInput.trim() === ''}
-							class="bg-primary rounded-2xl px-6 py-4 text-lg font-bold text-black shadow transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+							class="bg-primary w-full rounded-2xl px-6 py-4 text-lg font-bold text-black shadow transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
 						>
 							Check
 						</button>
 					</div>
 
-					<p class="text-sm text-gray-400">Press Enter or tap Check</p>
+					<p class="text-sm text-gray-600">Press Enter or tap Check</p>
 				</div>
 			{/key}
 		{:else}
 			<!-- Session complete -->
 			<div
-				in:scale={{ duration: 300, start: 0.9 }}
+				in:scale={{ duration: reducedMotion ? 0 : 300, start: 0.9 }}
 				class="flex w-full max-w-lg flex-col items-center gap-6 rounded-3xl bg-white p-10 text-center shadow-lg"
 			>
 				<p class="text-4xl font-black text-gray-800">All done!</p>
@@ -320,16 +367,19 @@
 
 		<!-- Word walls -->
 		{#if correctWords.length > 0 || missedWords.length > 0}
-			<div in:fade={{ duration: 300 }} class="mt-8 grid w-full max-w-lg grid-cols-2 gap-4">
+			<div
+				in:fade={{ duration: reducedMotion ? 0 : 300 }}
+				class="mt-8 grid w-full max-w-lg grid-cols-2 gap-4"
+			>
 				<!-- Correct -->
 				<div class="rounded-2xl bg-white p-4 shadow">
 					<h3 class="mb-3 text-sm font-bold tracking-wide text-green-600 uppercase">
 						Got it ({correctWords.length})
 					</h3>
 					<div class="flex flex-wrap gap-2">
-						{#each correctWords as word}
+						{#each correctWords as word, i (i)}
 							<span
-								in:fly={{ y: 8, duration: 200 }}
+								in:fly={{ y: 8, duration: reducedMotion ? 0 : 200 }}
 								class="rounded-full bg-green-100 px-3 py-1 text-sm font-semibold text-green-700"
 							>
 								{word}
@@ -344,9 +394,9 @@
 						Practice ({missedWords.length})
 					</h3>
 					<div class="flex flex-wrap gap-2">
-						{#each missedWords as word}
+						{#each missedWords as word, i (i)}
 							<span
-								in:fly={{ y: 8, duration: 200 }}
+								in:fly={{ y: 8, duration: reducedMotion ? 0 : 200 }}
 								class="rounded-full bg-red-100 px-3 py-1 text-sm font-semibold text-red-600"
 							>
 								{word}
@@ -357,7 +407,7 @@
 			</div>
 		{/if}
 	{:else if !selectedUser}
-		<div class="mt-12 text-center text-gray-400">
+		<div class="mt-12 text-center text-gray-600">
 			<p class="text-2xl font-bold">Select a reader above to start!</p>
 		</div>
 	{/if}

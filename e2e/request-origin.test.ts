@@ -19,7 +19,9 @@ for (const host of hosts) {
 			maxRedirects: 0
 		});
 		expect(login.status()).toBe(303);
-		expect(login.headers().location).toBe('/settings');
+		expect(new URL(login.headers().location, `https://${host}/login`).href).toBe(
+			`https://${host}/settings`
+		);
 		const cookie = login.headers()['set-cookie'];
 		expect(cookie).toContain('HttpOnly');
 		expect(cookie).toContain('Secure');
@@ -29,8 +31,10 @@ for (const host of hosts) {
 		});
 		expect(settings.status()).toBe(200);
 		const answer = await request.post('/api/math', {
-			headers,
+			headers: { ...headers, Cookie: cookie.split(';')[0] },
 			data: {
+				eventId: crypto.randomUUID(),
+				occurredAt: new Date().toISOString(),
 				childId: 1,
 				sessionId: crypto.randomUUID(),
 				operation: 'addition',

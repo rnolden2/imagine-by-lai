@@ -1,15 +1,15 @@
 import OpenAI from 'openai';
-import { GoogleGenerativeAI, type GenerativeModel } from '@google/generative-ai';
-import { env } from '$env/dynamic/private';
-import { getOpenAIApiKey, getGeminiApiKey } from '$lib/server/secrets';
+import { GoogleGenAI, type GenerateContentConfig } from '@google/genai';
+import { env } from '#lib/server/runtime-config';
+import { getOpenAIApiKey, getGeminiApiKey } from '#lib/server/secrets';
 
 let openaiClient: OpenAI | null = null;
-let geminiTextModel: GenerativeModel | null = null;
-let geminiImageModel: GenerativeModel | null = null;
+let geminiClient: GoogleGenAI | null = null;
 
 export type AIProvider = 'openai' | 'gemini';
 
 export type FallbackOptions = {
+	beforePrimary?: (provider: AIProvider) => Promise<void>;
 	beforeFallback?: () => Promise<void>;
 	onProvider?: (provider: AIProvider) => void;
 };
@@ -22,19 +22,24 @@ function provider(): AIProvider {
 	return selected;
 }
 
-export async function getGeminiTextModel(): Promise<GenerativeModel> {
-	if (geminiTextModel) return geminiTextModel;
-	const client = new GoogleGenerativeAI(await getGeminiApiKey());
-	geminiTextModel = client.getGenerativeModel({ model: 'gemini-2.5-pro' });
-	return geminiTextModel;
+async function getGeminiClient(): Promise<GoogleGenAI> {
+	if (geminiClient) return geminiClient;
+	geminiClient = new GoogleGenAI({ apiKey: await getGeminiApiKey() });
+	return geminiClient;
 }
 
-export async function getGeminiImageModel(): Promise<GenerativeModel> {
-	if (geminiImageModel) return geminiImageModel;
-	const client = new GoogleGenerativeAI(await getGeminiApiKey());
-	geminiImageModel = client.getGenerativeModel({ model: 'gemini-2.5-flash-image' });
-	return geminiImageModel;
+function geminiConfig(timeout: number, config: GenerateContentConfig = {}): GenerateContentConfig {
+	return {
+		...config,
+		// Every provider purchase is reserved by the caller. Hidden SDK retries or
+		// continuation requests would bypass that accounting boundary.
+		automaticContinuation: false,
+		httpOptions: { timeout, retryOptions: { attempts: 1 } }
+	};
 }
+
+const GEMINI_TEXT_MODEL = 'gemini-2.5-pro';
+const GEMINI_IMAGE_MODEL = 'gemini-2.5-flash-image';
 
 const textModel = () => env.OPENAI_TEXT_MODEL?.trim() || 'gpt-5.1';
 const imageModel = () => env.OPENAI_IMAGE_MODEL?.trim() || 'gpt-image-1.5';
@@ -72,14 +77,21 @@ async function storyText(
 	image?: Buffer
 ): Promise<string> {
 	if (selected === 'gemini') {
-		const model = await getGeminiTextModel();
-		const response = await model.generateContent(
-			image
-				? [prompt, { inlineData: { data: image.toString('base64'), mimeType: 'image/png' } }]
+		const client = await getGeminiClient();
+		const response = await client.models.generateContent({
+			model: GEMINI_TEXT_MODEL,
+			contents: image
+				? {
+						role: 'user',
+						parts: [
+							{ text: prompt },
+							{ inlineData: { data: image.toString('base64'), mimeType: 'image/png' } }
+						]
+					}
 				: prompt,
-			{ timeout }
-		);
-		const text = response.response.text();
+			config: geminiConfig(timeout, { maxOutputTokens: 6000 })
+		});
+		const text = response.text ?? '';
 		if (!text.trim()) throw new Error('Gemini returned an empty text response.');
 		return text;
 	}
@@ -88,6 +100,7 @@ async function storyText(
 		{
 			model: textModel(),
 			store: false,
+			max_output_tokens: 6000,
 			input: image
 				? [
 						{
@@ -111,13 +124,17 @@ async function storyText(
 
 async function storyImage(selected: AIProvider, timeout: number, prompt: string): Promise<Buffer> {
 	if (selected === 'gemini') {
-		const model = await getGeminiImageModel();
-		const response = await model.generateContent(prompt, { timeout });
-		const image = response.response.candidates?.[0]?.content.parts.find(
+		const client = await getGeminiClient();
+		const response = await client.models.generateContent({
+			model: GEMINI_IMAGE_MODEL,
+			contents: prompt,
+			config: geminiConfig(timeout)
+		});
+		const image = response.candidates?.[0]?.content?.parts?.find(
 			(part) => part.inlineData?.data
 		)?.inlineData;
 		if (!image?.data) throw new Error('Gemini returned no image data.');
-		return Buffer.from(image.data, 'base64');
+		return validPng(Buffer.from(image.data, 'base64'));
 	}
 	const client = await getOpenAIClient();
 	const response = await client.images.generate(
@@ -133,10 +150,15 @@ async function storyImage(selected: AIProvider, timeout: number, prompt: string)
 	);
 	const data = response.data?.[0]?.b64_json;
 	if (!data) throw new Error('OpenAI returned no image data.');
-	const buffer = Buffer.from(data, 'base64');
-	if (!buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-		throw new Error('OpenAI returned an invalid PNG image.');
-	}
+	return validPng(Buffer.from(data, 'base64'));
+}
+
+function validPng(buffer: Buffer) {
+	if (
+		buffer.length > 20 * 1024 * 1024 ||
+		!buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+	)
+		throw new Error('AI returned an invalid PNG image.');
 	return buffer;
 }
 
@@ -147,14 +169,16 @@ function parseDefinition(text: string): { phonetic: string; definition: string }
 		typeof result !== 'object' ||
 		!('phonetic' in result) ||
 		typeof result.phonetic !== 'string' ||
-		!result.phonetic.trim() ||
 		!('definition' in result) ||
-		typeof result.definition !== 'string' ||
-		!result.definition.trim()
+		typeof result.definition !== 'string'
 	) {
 		throw new Error('AI returned an invalid word definition.');
 	}
-	return { phonetic: result.phonetic, definition: result.definition };
+	const phonetic = result.phonetic.trim();
+	const definition = result.definition.trim();
+	if (!phonetic || phonetic.length > 160 || !definition || definition.length > 1000)
+		throw new Error('AI returned an invalid word definition.');
+	return { phonetic, definition };
 }
 
 async function wordDefinition(
@@ -163,17 +187,16 @@ async function wordDefinition(
 	word: string
 ): Promise<{ phonetic: string; definition: string }> {
 	if (selected === 'gemini') {
-		const model = await getGeminiTextModel();
-		const response = await model.generateContent(
-			`For the word ${JSON.stringify(word)}, provide its phonetic spelling and a simple definition suitable for a 6-year-old. Return only JSON with two string keys: phonetic and definition.`,
-			{ timeout }
-		);
-		return parseDefinition(
-			response.response
-				.text()
-				.replace(/^```(?:json)?\s*|\s*```$/g, '')
-				.trim()
-		);
+		const client = await getGeminiClient();
+		const response = await client.models.generateContent({
+			model: GEMINI_TEXT_MODEL,
+			contents: `For the word ${JSON.stringify(word)}, provide its phonetic spelling and a simple definition suitable for a 6-year-old. Return only JSON with two string keys: phonetic and definition.`,
+			config: geminiConfig(timeout, {
+				maxOutputTokens: 6000,
+				responseMimeType: 'application/json'
+			})
+		});
+		return parseDefinition((response.text ?? '').replace(/^```(?:json)?\s*|\s*```$/g, '').trim());
 	}
 	const client = await getOpenAIClient();
 	const response = await client.responses.create(
@@ -190,7 +213,10 @@ async function wordDefinition(
 					strict: true,
 					schema: {
 						type: 'object',
-						properties: { phonetic: { type: 'string' }, definition: { type: 'string' } },
+						properties: {
+							phonetic: { type: 'string', minLength: 1, maxLength: 160 },
+							definition: { type: 'string', minLength: 1, maxLength: 1000 }
+						},
 						required: ['phonetic', 'definition'],
 						additionalProperties: false
 					}
@@ -210,25 +236,26 @@ async function gamePlan(
 	schema: Record<string, unknown>
 ): Promise<unknown> {
 	if (selected === 'gemini') {
-		const model = await getGeminiTextModel();
-		const response = await model.generateContent(
-			{
+		const client = await getGeminiClient();
+		const response = await client.models.generateContent({
+			model: GEMINI_TEXT_MODEL,
+			contents: [
+				{
+					role: 'user',
+					parts: [
+						{
+							text: `${prompt}\nReturn only JSON matching this schema: ${JSON.stringify(schema)}`
+						}
+					]
+				}
+			],
+			config: geminiConfig(timeout, {
 				systemInstruction: gameInstructions,
-				contents: [
-					{
-						role: 'user',
-						parts: [
-							{
-								text: `${prompt}\nReturn only JSON matching this schema: ${JSON.stringify(schema)}`
-							}
-						]
-					}
-				],
-				generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 6000 }
-			},
-			{ timeout }
-		);
-		return JSON.parse(response.response.text());
+				responseMimeType: 'application/json',
+				maxOutputTokens: 6000
+			})
+		});
+		return JSON.parse(response.text ?? '');
 	}
 	const client = await getOpenAIClient();
 	const response = await client.responses.create(
@@ -252,12 +279,13 @@ async function gameImage(
 	transparent = true
 ): Promise<Buffer> {
 	if (selected === 'gemini') {
-		const model = await getGeminiImageModel();
-		const response = await model.generateContent(
-			`${prompt} ${transparent ? 'Actual transparent background with an alpha channel; no checkerboard.' : ''}`,
-			{ timeout }
-		);
-		const image = response.response.candidates?.[0]?.content.parts.find(
+		const client = await getGeminiClient();
+		const response = await client.models.generateContent({
+			model: GEMINI_IMAGE_MODEL,
+			contents: `${prompt} ${transparent ? 'Actual transparent background with an alpha channel; no checkerboard.' : ''}`,
+			config: geminiConfig(timeout)
+		});
+		const image = response.candidates?.[0]?.content?.parts?.find(
 			(p) => p.inlineData?.data
 		)?.inlineData;
 		if (!image?.data) throw new Error('EMPTY_IMAGE');
@@ -291,12 +319,14 @@ async function withFallback<T>(
 ): Promise<T> {
 	const selected = provider();
 	if (selected === 'gemini') {
+		await options.beforePrimary?.('gemini');
 		const result = await work('gemini', timeout);
 		options.onProvider?.('gemini');
 		return result;
 	}
 	const deadline = Date.now() + timeout;
 	let result: T;
+	await options.beforePrimary?.('openai');
 	try {
 		result = await work('openai', Math.floor(timeout / 2));
 	} catch (cause) {
@@ -326,14 +356,24 @@ async function withFallback<T>(
 	return result;
 }
 
-export function generateStoryText(prompt: string, image?: Buffer): Promise<string> {
-	return withFallback('story_text', 55_000, (selected, timeout) =>
-		storyText(selected, timeout, prompt, image)
+export function generateStoryText(
+	prompt: string,
+	image?: Buffer,
+	options: FallbackOptions = {}
+): Promise<string> {
+	return withFallback(
+		'story_text',
+		55_000,
+		(selected, timeout) => storyText(selected, timeout, prompt, image),
+		options
 	);
 }
-export function generateStoryImage(prompt: string): Promise<Buffer> {
-	return withFallback('story_image', 85_000, (selected, timeout) =>
-		storyImage(selected, timeout, prompt)
+export function generateStoryImage(prompt: string, options: FallbackOptions = {}): Promise<Buffer> {
+	return withFallback(
+		'story_image',
+		85_000,
+		(selected, timeout) => storyImage(selected, timeout, prompt),
+		options
 	);
 }
 export function generateWordDefinition(

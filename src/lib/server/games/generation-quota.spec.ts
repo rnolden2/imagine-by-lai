@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { PGlite } from '@electric-sql/pglite';
 import { createTestDatabase } from '../../../../scripts/word-kitchen/test-db.mjs';
-import type { GenerationQuota } from '$lib/games/word-kitchen/generation-quota';
+import type { GenerationQuota } from '#lib/games/word-kitchen/generation-quota';
 
 let db: PGlite;
 beforeEach(async () => {
@@ -90,12 +90,65 @@ it('preserves the active-job guard and daily spending cap after reset', async ()
 	expect(await quota()).toMatchObject({ remaining: 5 });
 });
 
+it('retains admission and spending evidence after child deletion removes personal job data', async () => {
+	const key = randomUUID();
+	const job = await enqueue(key, 1);
+	await finish(job.id);
+	await db.query('update game_cost_reservations set estimated=5 where job_id=$1', [job.id]);
+	await db.query('delete from child_profiles where id=1');
+
+	expect(
+		(await db.query('select id from game_generation_jobs where id=$1', [job.id])).rows
+	).toEqual([]);
+	expect(
+		(await db.query('select id from game_generation_requests where id=$1', [job.id])).rows
+	).toHaveLength(1);
+	expect(
+		(await db.query('select id from game_cost_reservations where job_id=$1', [job.id])).rows
+	).toHaveLength(1);
+	expect(await quota()).toMatchObject({ used: 1, remaining: 4 });
+	await expect(enqueue(randomUUID(), 2)).rejects.toThrow('BUDGET_EXCEEDED');
+	await expect(enqueue(key, 1)).rejects.toThrow('GENERATION_JOB_DELETED');
+});
+
+it('fences cost reservations to the currently leased generation worker', async () => {
+	const job = await enqueue();
+	await expect(
+		db.query('select wk_reserve_cost($1,$2,$3,$4,$5,$6)', [job.id, 0, `${job.id}:early`, 0.1, 2, 5])
+	).rejects.toThrow('STALE_LEASE');
+	const claimed = (
+		await db.query<{ job: { lease_token: number } }>('select wk_claim_job($1) job', [job.id])
+	).rows[0].job;
+	await db.query('select wk_reserve_cost($1,$2,$3,$4,$5,$6)', [
+		job.id,
+		claimed.lease_token,
+		`${job.id}:leased`,
+		0.1,
+		2,
+		5
+	]);
+	await db.query(
+		"update game_generation_jobs set lease_expires_at=now()-interval '1 second' where id=$1",
+		[job.id]
+	);
+	await expect(
+		db.query('select wk_reserve_cost($1,$2,$3,$4,$5,$6)', [
+			job.id,
+			claimed.lease_token,
+			`${job.id}:stale`,
+			0.1,
+			2,
+			5
+		])
+	).rejects.toThrow('STALE_LEASE');
+});
+
 it('counts UTC days and does not change earlier-day jobs when resetting', async () => {
 	await db.exec("set timezone='America/Los_Angeles'");
 	const old = await enqueue();
 	await finish(old.id);
 	await db.query(
-		`update game_generation_jobs set created_at=(date_trunc('day',now() at time zone 'UTC') at time zone 'UTC')-interval '1 second' where id=$1`,
+		`update game_generation_requests set created_at=(date_trunc('day',now() at time zone 'UTC') at time zone 'UTC')-interval '1 second' where id=$1`,
 		[old.id]
 	);
 	expect(await quota()).toMatchObject({ used: 0, remaining: 5 });

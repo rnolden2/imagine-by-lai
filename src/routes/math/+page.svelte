@@ -1,13 +1,13 @@
 <script lang="ts">
+	import { savePracticeAttempt } from '#lib/practice-history';
 	import type { PageData } from './$types';
 	import { onDestroy, onMount } from 'svelte';
-	import { base } from '$app/paths';
-	import { watchMathSettings } from '$lib/math-settings-sync';
-	import { generateProblem, resolveMathSettings, type Settings, type Problem } from '$lib/math';
+	import { watchMathSettings } from '#lib/math-settings-sync';
+	import { generateProblem, resolveMathSettings, type Settings, type Problem } from '#lib/math';
 	import { fade, scale } from 'svelte/transition';
-	import { theme } from '$lib/stores';
-	import { speak } from '$lib/tts';
-	import MilestoneAnimation from '$lib/components/MilestoneAnimation.svelte';
+	import { theme } from '#lib/stores';
+	import { speak } from '#lib/tts';
+	import MilestoneAnimation from '#lib/components/MilestoneAnimation.svelte';
 
 	export let data: PageData;
 
@@ -43,10 +43,11 @@
 	}
 
 	function resolveSettings(userId: number, grade: string): Settings {
-		console.log('Resolving settings for userId:', userId, 'grade:', grade);
 		return resolveMathSettings(
 			grade,
-			data.mathSettings.find((setting) => Number(setting.child_id ?? setting.user_id) === Number(userId))
+			data.mathSettings.find(
+				(setting) => Number(setting.child_id ?? setting.user_id) === Number(userId)
+			)
 		);
 	}
 
@@ -61,7 +62,9 @@
 		if (!user) return;
 		const next = resolveMathSettings(
 			user.grade,
-			mathSettings.find((setting) => Number(setting.child_id ?? setting.user_id) === Number(user.id))
+			mathSettings.find(
+				(setting) => Number(setting.child_id ?? setting.user_id) === Number(user.id)
+			)
 		);
 		// Background refreshes must not interrupt an answer unless the settings changed.
 		if (JSON.stringify(next) === JSON.stringify(currentSettings)) return;
@@ -116,29 +119,20 @@
 
 		if (selectedUser && sessionId) {
 			const attemptSession = sessionId;
-			fetch(`${base}/api/math`, {
-				method: 'POST',
-				keepalive: true,
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					childId: selectedUser.id,
-					userId: selectedUser.id,
-					sessionId,
-					operation: currentProblem.op,
-					problemState: currentProblem.state,
-					num1: currentProblem.num1 ?? 0,
-					num2: currentProblem.num2 ?? 0,
-					correctAnswer: currentProblem.answer,
-					givenAnswer: given,
-					isCorrect
-				})
-			})
-				.then((response) => {
-					if (!response.ok) throw new Error('History save failed');
-				})
-				.catch(() => {
-					if (sessionId === attemptSession) historyError = true;
-				});
+			savePracticeAttempt('math', {
+				childId: selectedUser.id,
+				userId: selectedUser.id,
+				sessionId,
+				operation: currentProblem.op,
+				problemState: currentProblem.state,
+				num1: currentProblem.num1 ?? 0,
+				num2: currentProblem.num2 ?? 0,
+				correctAnswer: currentProblem.answer,
+				givenAnswer: given,
+				isCorrect
+			}).catch(() => {
+				if (sessionId === attemptSession) historyError = true;
+			});
 		}
 
 		if (feedbackTimer) clearTimeout(feedbackTimer);
@@ -158,6 +152,8 @@
 	$: fractionDenominator = Number(currentProblem?.state.denominator ?? 1);
 	$: recognitionNumber = Number(currentProblem?.state.number ?? 0);
 </script>
+
+<svelte:head><title>Math Practice · Imaginations By Lai</title></svelte:head>
 
 <div class="min-h-screen bg-sky-50 px-4 py-8">
 	<section class="mx-auto max-w-5xl">
@@ -193,15 +189,15 @@
 			>
 				<div class="text-center">
 					<p class="text-3xl font-black text-emerald-500">{correctCount}</p>
-					<p class="text-xs font-bold text-slate-500 uppercase">Correct</p>
+					<p class="text-xs font-bold text-slate-800 uppercase">Correct</p>
 				</div>
 				<div class="text-center">
-					<p class="text-3xl font-black text-slate-400">{totalCount}</p>
-					<p class="text-xs font-bold text-slate-500 uppercase">Total</p>
+					<p class="text-3xl font-black text-slate-600">{totalCount}</p>
+					<p class="text-xs font-bold text-slate-800 uppercase">Total</p>
 				</div>
 				<div class="text-center">
-					<p class="text-primary text-3xl font-black">{accuracy}%</p>
-					<p class="text-xs font-bold text-slate-500 uppercase">Accuracy</p>
+					<p class="text-3xl font-black text-amber-900">{accuracy}%</p>
+					<p class="text-xs font-bold text-slate-800 uppercase">Accuracy</p>
 				</div>
 			</div>
 
@@ -301,7 +297,7 @@
 
 				{#if currentProblem.choices}
 					<div class="grid w-full grid-cols-2 gap-3">
-						{#each currentProblem.choices as choice}
+						{#each currentProblem.choices as choice (choice)}
 							<button
 								type="button"
 								disabled={feedback !== null}
@@ -337,7 +333,7 @@
 				{/if}
 			</div>
 		{:else}
-			<div class="mt-12 text-center text-2xl font-black text-slate-400">Pick a child to start.</div>
+			<div class="mt-12 text-center text-2xl font-black text-slate-600">Pick a child to start.</div>
 		{/if}
 	</section>
 </div>

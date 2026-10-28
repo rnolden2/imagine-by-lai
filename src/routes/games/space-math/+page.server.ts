@@ -1,4 +1,4 @@
-import { loadMathPractice } from '$lib/server/math-practice';
+import { loadMathPractice } from '#lib/server/math-practice';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = () => loadMathPractice();
+export const load: PageServerLoad = loadMathPractice;

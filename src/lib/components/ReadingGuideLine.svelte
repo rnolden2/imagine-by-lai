@@ -5,7 +5,11 @@
 </script>
 
 {#if visible}
-	<div class="reading-guide-line" style="top: {top}px; height: {height}px;"></div>
+	<div
+		aria-hidden="true"
+		class="reading-guide-line"
+		style="top: {top}px; height: {height}px;"
+	></div>
 {/if}
 
 <style>
@@ -17,5 +21,11 @@
 		z-index: 1;
 		pointer-events: none;
 		transition: top 0.1s ease-out;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.reading-guide-line {
+			transition: none;
+		}
 	}
 </style>
